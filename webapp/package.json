@@ -24,15 +24,15 @@
     "react-markdown": "^10.0.0",
     "remark-gfm": "^4.0.1",
     "thinking-orbs": "^0.3.1",
-    "three": "^0.186.1"
+    "three": "^0.187.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
-    "@types/three": "^0.186.0",
-    "@vitejs/plugin-react": "^4.3.4",
-    "typescript": "^5.7.3",
-    "vite": "^6.2.0"
+    "@types/three": "^0.187.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
   },
   "overrides": {
     "dompurify": "^3.4.17"
