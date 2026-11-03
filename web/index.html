@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#17251e">
+    <meta name="description" content="A standalone, dependency-free recovery console for the Symbiote gateway.">
+    <title>SYMBIOTE — Recovery UI</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f2f1e9;
+        --paper-raised: #fbfaf6;
+        --paper-muted: #e9e9df;
+        --ink: #242820;
+        --ink-soft: #555b50;
+        --ink-muted: #777d71;
+        --line: #dedfd3;
+        --forest: #17251e;
+        --forest-raised: #203229;
+        --forest-ink: #f2f0e8;
+        --accent: #9ab17c;
+        --accent-ink: #283321;
+        --signal: #d66b50;
+        --good: #4e8060;
+        --warn: #a77737;
+        --bad: #b65148;
+        --shadow: 0 18px 50px rgb(34 42 32 / 8%);
+        --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+        --sidebar: 252px;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --paper: #151a16;
+        --paper-raised: #1d241e;
+        --paper-muted: #252e27;
+        --ink: #eceee8;
+        --ink-soft: #c1c7bd;
+        --ink-muted: #929b90;
+        --line: #333d35;
+        --forest: #101713;
+        --forest-raised: #1a251d;
+        --forest-ink: #f2f0e8;
+        --accent: #a4ba89;
+        --accent-ink: #172015;
+        --signal: #e47b5b;
+        --good: #88b48f;
+        --warn: #d5aa67;
+        --bad: #e1847c;
+        --shadow: 0 18px 50px rgb(0 0 0 / 24%);
+      }
+      * { box-sizing: border-box; }
+      html { min-width: 320px; min-height: 100%; scroll-behavior: smooth; }
+      body {
+        min-width: 320px;
+        min-height: 100vh;
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(ellipse at 82% 0%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 34rem),
+          var(--paper);
+        font: 14px/1.55 Inter, "Segoe UI", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      button, input, textarea { font: inherit; }
+      button, a { -webkit-tap-highlight-color: transparent; }
+      a { color: inherit; }
+      button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
+        outline: 3px solid color-mix(in srgb, var(--signal) 62%, white);
+        outline-offset: 3px;
+      }
+      .shell { display: grid; min-height: 100vh; grid-template-columns: var(--sidebar) minmax(0, 1fr); }
+      .rail {
+        position: sticky;
+        top: 0;
+        display: flex;
+        height: 100vh;
+        min-height: 520px;
+        flex-direction: column;
+        padding: 22px 15px 14px;
+        color: var(--forest-ink);
+        background: var(--forest);
+      }
+      .brand {
+        display: inline-flex;
+        min-height: 36px;
+        align-items: center;
+        gap: 10px;
+        padding: 0 7px;
+        color: inherit;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: .15em;
+        text-decoration: none;
+      }
+      .brand-mark { width: 25px; height: 25px; color: var(--accent); }
+      .rail-caption, .eyebrow, .metric-label, .chat-label {
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+      }
+      .rail-caption { margin: 33px 8px 10px; color: #a1ad9f; }
+      .rail-nav { display: grid; gap: 5px; }
+      .rail-nav a {
+        display: flex;
+        min-height: 39px;
+        align-items: center;
+        padding: 0 11px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        color: #b8c2b6;
+        font-size: 12px;
+        text-decoration: none;
+        transition: background .16s ease, color .16s ease, border-color .16s ease;
+      }
+      .rail-nav a:hover, .rail-nav a[aria-current="page"] {
+        border-color: #3c5042;
+        color: #f4f2e8;
+        background: var(--forest-raised);
+      }
+      .rail-nav a[aria-current="page"]::before {
+        width: 6px;
+        height: 6px;
+        margin-right: 10px;
+        border-radius: 50%;
+        background: var(--accent);
+        content: "";
+      }
+      .rail-status {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin-top: auto;
+        padding: 14px 7px 4px;
+        border-top: 1px solid #35443a;
+        color: #b8c2b6;
+        font-family: var(--mono);
+        font-size: 9px;
+      }
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 7px;
+        border-radius: 50%;
+        background: var(--warn);
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 14%, transparent);
+      }
+      .status-dot[data-state="online"] { background: var(--good); box-shadow: 0 0 0 4px color-mix(in srgb, var(--good) 16%, transparent); }
+      .status-dot[data-state="offline"] { background: var(--bad); box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 14%, transparent); }
+      .main { min-width: 0; }
+      .topbar {
+        position: sticky;
+        z-index: 3;
+        top: 0;
+        display: flex;
+        min-height: 64px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 0 38px;
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in srgb, var(--paper) 92%, transparent);
+        backdrop-filter: blur(14px);
+      }
+      .topbar-context { color: var(--ink-muted); font-size: 11px; }
+      .topbar-actions { display: flex; align-items: center; gap: 9px; }
+      .button {
+        display: inline-flex;
+        min-height: 36px;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        color: var(--ink);
+        background: var(--paper-raised);
+        font-size: 11px;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+        transition: background .16s ease, border-color .16s ease, transform .16s ease;
+      }
+      .button:hover { border-color: color-mix(in srgb, var(--accent) 58%, var(--line)); background: var(--paper-muted); }
+      .button:active { transform: translateY(1px); }
+      .button-primary { border-color: var(--accent); color: var(--accent-ink); background: var(--accent); }
+      .button-primary:hover { border-color: color-mix(in srgb, var(--accent) 86%, black); background: color-mix(in srgb, var(--accent) 86%, white); }
+      .content { width: min(100%, 1500px); margin: 0 auto; padding: 36px 44px 48px; }
+      .eyebrow { margin: 0 0 11px; color: var(--ink-muted); }
+      .hero {
+        position: relative;
+        display: grid;
+        min-height: 220px;
+        grid-template-columns: minmax(0, 1fr) 210px;
+        align-items: center;
+        overflow: hidden;
+        padding: 27px 32px;
+        border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+        border-radius: 13px;
+        background:
+          linear-gradient(110deg, color-mix(in srgb, var(--paper-raised) 95%, transparent), color-mix(in srgb, var(--accent) 13%, var(--paper-raised))),
+          var(--paper-raised);
+        box-shadow: var(--shadow);
+      }
+      .hero-copy { position: relative; z-index: 1; max-width: 700px; }
+      h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp(32px, 4vw, 46px); font-weight: 500; letter-spacing: -.045em; line-height: 1.05; }
+      .hero-copy > p:not(.eyebrow) { max-width: 550px; margin: 12px 0 20px; color: var(--ink-soft); font-size: 12px; line-height: 1.7; }
+      .hero-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .orb-wrap { position: relative; display: grid; width: 172px; height: 172px; place-items: center; justify-self: center; }
+      .orb-halo { position: absolute; inset: 3px; border: 1px solid color-mix(in srgb, var(--accent) 56%, transparent); border-radius: 50%; box-shadow: 0 0 55px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 0 40px color-mix(in srgb, var(--accent) 14%, transparent); }
+      .orb { position: relative; width: 98px; height: 98px; border: 1px solid color-mix(in srgb, var(--accent) 75%, white); border-radius: 50%; background: radial-gradient(circle at 34% 28%, #f5f4e3, var(--accent) 25%, #738c5e 60%, #334c38 100%); box-shadow: 0 0 44px color-mix(in srgb, var(--accent) 47%, transparent), inset -16px -16px 27px rgb(18 36 23 / 25%); animation: orb-breathe 5s ease-in-out infinite; }
+      .orb::after { position: absolute; inset: 20% 27%; border: 1px solid rgb(255 255 255 / 54%); border-radius: 50%; content: ""; transform: rotate(-35deg) scaleX(.55); }
+      @keyframes orb-breathe { 50% { transform: scale(1.055); box-shadow: 0 0 58px color-mix(in srgb, var(--accent) 62%, transparent), inset -16px -16px 27px rgb(18 36 23 / 25%); } }
+      .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+      .surface {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--paper-raised);
+        box-shadow: 0 6px 20px rgb(34 42 32 / 3%);
+      }
+      .metric { min-height: 92px; padding: 14px 15px; }
+      .metric-label { display: block; margin-bottom: 11px; color: var(--ink-muted); font-size: 8px; }
+      .metric-value { display: flex; min-width: 0; align-items: center; gap: 8px; overflow: hidden; font-size: 15px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .metric-value small { overflow: hidden; color: var(--ink-muted); font-family: var(--mono); font-size: 9px; font-weight: 400; text-overflow: ellipsis; }
+      .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(290px, .85fr); gap: 12px; margin-top: 12px; }
+      .panel { padding: 18px; }
+      .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 15px; }
+      .panel-heading h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 21px; font-weight: 500; letter-spacing: -.02em; }
+      .panel-heading p { margin: 5px 0 0; color: var(--ink-muted); font-size: 10px; line-height: 1.55; }
+      .chat-label { margin: 0 0 7px; color: var(--ink-muted); }
+      .chat-log { display: flex; min-height: 220px; max-height: 340px; flex-direction: column; gap: 10px; overflow: auto; padding: 3px 2px 12px; }
+      .message { width: fit-content; max-width: min(92%, 650px); padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--ink-soft); font-size: 11px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .message-user { align-self: flex-end; border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); color: var(--ink); background: color-mix(in srgb, var(--accent) 22%, var(--paper-raised)); }
+      .message-assistant { align-self: flex-start; }
+      .message-error { border-color: color-mix(in srgb, var(--bad) 46%, var(--line)); }
+      .chat-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+      textarea, input { width: 100%; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--paper); }
+      textarea { min-height: 58px; max-height: 150px; resize: vertical; padding: 10px 11px; font-size: 11px; line-height: 1.5; }
+      input { min-height: 38px; padding: 0 11px; font-size: 11px; }
+      textarea::placeholder, input::placeholder { color: var(--ink-muted); }
+      .chat-send { min-width: 78px; height: 38px; }
+      .diagnostics { display: grid; gap: 10px; }
+      .diagnostic-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+      .diagnostic-row:last-child { border-bottom: 0; }
+      .diagnostic-row strong { font-size: 10px; font-weight: 600; }
+      .diagnostic-row span { color: var(--ink-muted); font-family: var(--mono); font-size: 9px; text-align: right; overflow-wrap: anywhere; }
+      .access-card { margin-top: 12px; padding: 14px; border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+      .access-card[hidden] { display: none; }
+      .access-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 10px; }
+      .notice { min-height: 18px; margin: 10px 0 0; color: var(--ink-muted); font-size: 10px; }
+      .notice[data-tone="error"] { color: var(--bad); }
+      .notice[data-tone="success"] { color: var(--good); }
+      .status-pill { display: inline-flex; min-height: 25px; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-soft); background: var(--paper-raised); font-family: var(--mono); font-size: 9px; }
+      .status-pill .status-dot { width: 6px; height: 6px; flex-basis: 6px; }
+      .footer-note { margin: 17px 0 0; color: var(--ink-muted); font-family: var(--mono); font-size: 8px; text-align: center; }
+      @media (max-width: 1080px) {
+        .content { padding: 29px 26px 38px; }
+        .topbar { padding-right: 26px; padding-left: 26px; }
+        .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 760px) {
+        :root { --sidebar: 0px; }
+        .shell { display: block; }
+        .rail { position: relative; height: auto; min-height: 0; padding: 10px 14px 8px; }
+        .brand { min-height: 34px; padding: 0 2px; }
+        .rail-caption, .rail-status { display: none; }
+        .rail-nav { display: flex; gap: 5px; margin-top: 7px; overflow-x: auto; scrollbar-width: none; }
+        .rail-nav::-webkit-scrollbar { display: none; }
+        .rail-nav a { min-height: 31px; flex: 0 0 auto; padding: 0 9px; font-size: 10px; }
+        .rail-nav a[aria-current="page"]::before { width: 5px; height: 5px; margin-right: 7px; }
+        .topbar { position: relative; min-height: 52px; padding: 0 14px; }
+        .topbar-context { font-size: 9px; }
+        .topbar-actions { gap: 6px; }
+        .button { min-height: 33px; padding: 0 9px; font-size: 9px; }
+        .content { padding: 20px 14px max(28px, env(safe-area-inset-bottom)); }
+        .hero { min-height: 206px; grid-template-columns: minmax(0, 1fr) 104px; gap: 2px; padding: 22px 17px; }
+        h1 { font-size: clamp(28px, 8vw, 38px); }
+        .hero-copy > p:not(.eyebrow) { font-size: 10px; }
+        .orb-wrap { width: 106px; height: 106px; }
+        .orb { width: 64px; height: 64px; }
+        .orb-halo { inset: 2px; }
+        .summary-grid { gap: 7px; }
+        .metric { min-height: 80px; padding: 11px; }
+        .metric-value { font-size: 12px; }
+        .workspace-grid { grid-template-columns: minmax(0, 1fr); }
+        .panel { padding: 14px; }
+        .chat-log { min-height: 180px; }
+      }
+      @media (max-width: 390px) {
+        .topbar-context { max-width: 125px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .hero { grid-template-columns: minmax(0, 1fr) 72px; padding: 19px 13px; }
+        .orb-wrap { width: 76px; height: 76px; }
+        .orb { width: 52px; height: 52px; }
+        .hero-actions .button { min-height: 31px; padding: 0 8px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail" aria-label="Symbiote recovery navigation">
+        <a class="brand" href="#overview" aria-label="Symbiote recovery home">
+          <svg class="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <circle cx="16" cy="16" r="13" stroke="currentColor" stroke-width="1.5"/>
+            <circle cx="16" cy="16" r="4" fill="currentColor"/>
+            <path d="M16 3v8m0 10v8M3 16h8m10 0h8M6.8 6.8l5.7 5.7m7 7 5.7 5.7m0-18.4-5.7 5.7m-7 7-5.7 5.7" stroke="currentColor" stroke-width="1.2"/>
+          </svg>
+          <span>SYMBIOTE</span>
+        </a>
+        <div class="rail-caption">RECOVERY CONSOLE</div>
+        <nav class="rail-nav" aria-label="Recovery sections">
+          <a href="#overview" aria-current="page">Overview</a>
+          <a href="#chat">Agent chat</a>
+          <a href="#diagnostics">Diagnostics</a>
+        </nav>
+        <div class="rail-status"><span class="status-dot" id="rail-dot" data-state="checking"></span><span id="rail-state">Connecting to gateway</span></div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <span class="topbar-context">Standalone recovery interface · no app bundle required</span>
+          <div class="topbar-actions">
+            <button class="button" type="button" id="theme-toggle" aria-label="Toggle color theme">Dark mode</button>
+            <a class="button" href="/">Open full workspace</a>
+          </div>
+        </header>
+
+        <div class="content" id="overview">
+          <p class="eyebrow">SYMBIOTE / GATEWAY</p>
+          <section class="hero" aria-labelledby="hero-title">
+            <div class="hero-copy">
+              <p class="eyebrow">CONTROL PLANE · RECOVERY</p>
+              <h1 id="hero-title">A clear path back in.</h1>
+              <p>This native page is served directly by the gateway. It stays separate from the React workspace bundle so you can still check runtime health and reach the agent when the main interface fails to load.</p>
+              <div class="hero-actions">
+                <button class="button button-primary" type="button" id="refresh-button">Refresh status</button>
+                <a class="button" href="/">Return to workspace</a>
+              </div>
+            </div>
+            <div class="orb-wrap" aria-hidden="true"><div class="orb-halo"></div><div class="orb"></div></div>
+          </section>
+
+          <section class="summary-grid" aria-label="Gateway summary">
+            <article class="surface metric"><span class="metric-label">Gateway</span><strong class="metric-value"><span class="status-dot" id="gateway-dot" data-state="checking"></span><span id="gateway-value">Checking</span></strong></article>
+            <article class="surface metric"><span class="metric-label">Provider / model</span><strong class="metric-value" id="model-value">Waiting for status</strong></article>
+            <article class="surface metric"><span class="metric-label">Uptime</span><strong class="metric-value" id="uptime-value">—</strong></article>
+            <article class="surface metric"><span class="metric-label">Version</span><strong class="metric-value" id="version-value">—</strong></article>
+          </section>
+
+          <section class="workspace-grid">
+            <article class="surface panel" id="chat" aria-labelledby="chat-title">
+              <div class="panel-heading">
+                <div><p class="chat-label">DIRECT CHANNEL</p><h2 id="chat-title">Agent chat</h2><p>Send a message through the active gateway session.</p></div>
+                <span class="status-pill"><span class="status-dot" id="chat-dot" data-state="checking"></span><span id="chat-state">Checking</span></span>
+              </div>
+              <div class="chat-log" id="chat-log" role="log" aria-live="polite">
+                <div class="message message-assistant">The recovery console is ready. Check the gateway status, then send a message if the agent is online.</div>
+              </div>
+              <form class="chat-form" id="chat-form">
+                <label class="sr-only" for="chat-input">Message the agent</label>
+                <textarea id="chat-input" name="message" rows="2" placeholder="Send a message…" maxlength="12000"></textarea>
+                <button class="button button-primary chat-send" id="chat-send" type="submit">Send</button>
+              </form>
+              <p class="notice" id="chat-notice" role="status"></p>
+            </article>
+
+            <article class="surface panel" id="diagnostics" aria-labelledby="diagnostics-title">
+              <div class="panel-heading">
+                <div><p class="chat-label">LIVE CHECKS</p><h2 id="diagnostics-title">Runtime diagnostics</h2><p>Read-only checks from the active gateway.</p></div>
+              </div>
+              <div class="diagnostics">
+                <div class="diagnostic-row"><strong>Gateway API</strong><span id="api-check">Waiting</span></div>
+                <div class="diagnostic-row"><strong>Agent identity</strong><span id="agent-value">—</span></div>
+                <div class="diagnostic-row"><strong>Local session</strong><span id="session-value">Preparing</span></div>
+                <div class="diagnostic-row"><strong>Last check</strong><span id="checked-value">—</span></div>
+              </div>
+              <p class="notice" id="status-notice" role="status"></p>
+            </article>
+          </section>
+
+          <section class="surface access-card" id="access-card" hidden aria-labelledby="access-title">
+            <div class="panel-heading">
+              <div><p class="chat-label">LAN SECURITY</p><h2 id="access-title">Unlock this gateway</h2><p>Enter the local web access token configured for this gateway.</p></div>
+            </div>
+            <form class="access-form" id="access-form">
+              <label class="sr-only" for="access-token">Web access token</label>
+              <input id="access-token" type="password" autocomplete="current-password" placeholder="Web access token">
+              <button class="button button-primary" type="submit">Unlock</button>
+            </form>
+            <p class="notice" id="access-notice" role="status"></p>
+          </section>
+
+          <p class="footer-note">Native HTML · inline styles and script · same-origin gateway APIs</p>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      (() => {
+        const themeKey = 'symbiote-native-theme';
+        const tokenKey = 'symbiote-web-access-token';
+        const sessionKey = 'symbiote-native-session';
+        const elements = Object.fromEntries([
+          'theme-toggle', 'refresh-button', 'gateway-dot', 'gateway-value', 'model-value',
+          'uptime-value', 'version-value', 'api-check', 'agent-value', 'session-value',
+          'checked-value', 'rail-dot', 'rail-state', 'chat-dot', 'chat-state', 'chat-log',
+          'chat-form', 'chat-input', 'chat-send', 'chat-notice', 'status-notice',
+          'access-card', 'access-form', 'access-token', 'access-notice',
+        ].map(id => [id, document.getElementById(id)]));
+
+        let token = '';
+        let accessRequired = false;
+        let sessionId = '';
+        try {
+          token = localStorage.getItem(tokenKey) || '';
+          sessionId = localStorage.getItem(sessionKey) || '';
+          const savedTheme = localStorage.getItem(themeKey);
+          if (savedTheme === 'dark' || savedTheme === 'light') document.documentElement.dataset.theme = savedTheme;
+        } catch {
+          sessionId = '';
+        }
+        if (!sessionId) {
+          sessionId = `native-${typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+          try { localStorage.setItem(sessionKey, sessionId); } catch { /* The current session remains usable in memory. */ }
+        }
+        elements['session-value'].textContent = sessionId.slice(0, 18);
+
+        const setNotice = (element, text, tone = '') => {
+          element.textContent = text;
+          element.dataset.tone = tone;
+        };
+        const setState = (state, label) => {
+          elements['gateway-dot'].dataset.state = state;
+          elements['rail-dot'].dataset.state = state;
+          elements['chat-dot'].dataset.state = state;
+          elements['gateway-value'].textContent = label;
+          elements['rail-state'].textContent = label === 'Online' ? 'Gateway connected' : label;
+          elements['chat-state'].textContent = label;
+        };
+        const request = async (url, options = {}) => {
+          const headers = new Headers(options.headers || {});
+          if (token) headers.set('Authorization', `Bearer ${token}`);
+          const response = await fetch(url, { ...options, headers, cache: 'no-store' });
+          if (!response.ok) {
+            const body = await response.text();
+            let detail = body;
+            try { detail = JSON.parse(body).error || body; } catch { /* Keep the returned response text. */ }
+            const error = new Error(detail || `Request failed (${response.status}).`);
+            error.status = response.status;
+            throw error;
+          }
+          return response;
+        };
+        const setAccessState = required => {
+          accessRequired = required;
+          elements['access-card'].hidden = !required;
+        };
+        const resolveAccess = async () => {
+          try {
+            const response = await fetch('/api/access', {
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
+              cache: 'no-store',
+            });
+            if (!response.ok) return;
+            const access = await response.json();
+            setAccessState(access.required === true && access.authenticated !== true);
+            if (!accessRequired) return;
+            try {
+              const local = await fetch('/api/access/token', { cache: 'no-store' });
+              if (!local.ok) return;
+              const result = await local.json();
+              if (typeof result.token === 'string' && result.token.length >= 32) {
+                token = result.token;
+                try { localStorage.setItem(tokenKey, token); } catch { /* Token remains available for this page. */ }
+                setAccessState(false);
+              }
+            } catch {
+              setAccessState(true);
+            }
+          } catch {
+            setAccessState(false);
+          }
+        };
+        const refreshStatus = async () => {
+          elements['refresh-button'].disabled = true;
+          elements['api-check'].textContent = 'Checking';
+          setState('checking', 'Checking');
+          setNotice(elements['status-notice'], 'Connecting to the gateway…');
+          await resolveAccess();
+          try {
+            const response = await request('/api/status');
+            const status = await response.json();
+            const provider = status.providerName || status.provider || status.defaultProvider || '';
+            const model = status.model || status.defaultModel || '';
+            const displayModel = [provider, model].filter(Boolean).join(' / ');
+            elements['model-value'].textContent = displayModel || 'Configured';
+            elements['uptime-value'].textContent = status.uptimeHuman || 'Running';
+            elements['version-value'].textContent = status.version ? `v${String(status.version).replace(/^v/, '')}` : 'Current';
+            elements['agent-value'].textContent = status.agentName || status.name || 'Symbiote';
+            elements['api-check'].textContent = 'Healthy';
+            elements['checked-value'].textContent = new Date().toLocaleTimeString();
+            setState('online', 'Online');
+            setNotice(elements['status-notice'], 'Gateway status received.', 'success');
+          } catch (error) {
+            const needsToken = error && error.status === 401;
+            if (needsToken) setAccessState(true);
+            elements['api-check'].textContent = needsToken ? 'Access required' : 'Unavailable';
+            elements['model-value'].textContent = 'No connection';
+            elements['uptime-value'].textContent = '—';
+            elements['version-value'].textContent = '—';
+            setState('offline', needsToken ? 'Access required' : 'Disconnected');
+            setNotice(elements['status-notice'], error instanceof Error ? error.message : String(error), 'error');
+          } finally {
+            elements['refresh-button'].disabled = false;
+          }
+        };
+        const addMessage = (content, role, error = false) => {
+          const item = document.createElement('div');
+          item.className = `message message-${role}${error ? ' message-error' : ''}`;
+          item.textContent = content;
+          elements['chat-log'].append(item);
+          elements['chat-log'].scrollTop = elements['chat-log'].scrollHeight;
+          return item;
+        };
+        const readEvents = async (response, assistant) => {
+          if (!response.body) throw new Error('Streaming responses are not available in this browser.');
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let text = '';
+          const processEvent = line => {
+            if (!line.startsWith('data:')) return;
+            const payload = line.slice(5).trim();
+            if (!payload || payload === '[DONE]') return;
+            let event;
+            try { event = JSON.parse(payload); } catch { return; }
+            const delta = event.delta || event.text || event.content;
+            if ((event.type === 'text' || event.type === 'text_delta') && typeof delta === 'string') {
+              text += delta;
+              assistant.textContent = text;
+            } else if (event.type === 'done') {
+              const result = event.message || event.result || event;
+              if (typeof result.text === 'string' && result.text) {
+                text = result.text;
+                assistant.textContent = text;
+              }
+            } else if (event.type === 'error') {
+              throw new Error(typeof event.error === 'string' ? event.error : 'The agent turn failed.');
+            }
+          };
+          while (true) {
+            const { done, value } = await reader.read();
+            buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop() || '';
+            for (const line of lines) processEvent(line);
+            if (done) break;
+          }
+          if (buffer.trim()) processEvent(buffer);
+          if (!text) assistant.textContent = 'The gateway completed the request without a text response.';
+        };
+
+        elements['theme-toggle'].textContent = document.documentElement.dataset.theme === 'dark' ? 'Light mode' : 'Dark mode';
+        elements['theme-toggle'].addEventListener('click', () => {
+          const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+          document.documentElement.dataset.theme = theme;
+          elements['theme-toggle'].textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+          try { localStorage.setItem(themeKey, theme); } catch { /* The current page theme still changes. */ }
+        });
+        elements['refresh-button'].addEventListener('click', () => void refreshStatus());
+        elements['access-form'].addEventListener('submit', event => {
+          event.preventDefault();
+          const entered = elements['access-token'].value.trim();
+          if (entered.length < 32) {
+            setNotice(elements['access-notice'], 'The access token must contain at least 32 characters.', 'error');
+            return;
+          }
+          token = entered;
+          try { localStorage.setItem(tokenKey, token); } catch { /* Token remains available for this page. */ }
+          setAccessState(false);
+          setNotice(elements['access-notice'], 'Token saved for this browser.', 'success');
+          void refreshStatus();
+        });
+        elements['chat-form'].addEventListener('submit', async event => {
+          event.preventDefault();
+          const text = elements['chat-input'].value.trim();
+          if (!text || elements['chat-send'].disabled) return;
+          elements['chat-input'].value = '';
+          elements['chat-send'].disabled = true;
+          setNotice(elements['chat-notice'], 'Sending to the gateway…');
+          addMessage(text, 'user');
+          const assistant = addMessage('Connecting…', 'assistant');
+          try {
+            const response = await request('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+              body: JSON.stringify({ text, message: text, sessionId }),
+            });
+            await readEvents(response, assistant);
+            setNotice(elements['chat-notice'], 'Response received.', 'success');
+          } catch (error) {
+            assistant.textContent = error instanceof Error ? error.message : String(error);
+            assistant.classList.add('message-error');
+            setNotice(elements['chat-notice'], 'Message could not be delivered.', 'error');
+            if (error && error.status === 401) setAccessState(true);
+          } finally {
+            elements['chat-send'].disabled = false;
+            elements['chat-input'].focus();
+          }
+        });
+        elements['chat-input'].addEventListener('keydown', event => {
+          if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+            event.preventDefault();
+            elements['chat-form'].requestSubmit();
+          }
+        });
+        void refreshStatus();
+        window.setInterval(() => void refreshStatus(), 30000);
+      })();
+    </script>
+  </body>
+</html>

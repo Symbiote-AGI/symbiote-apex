@@ -5,6 +5,7 @@ build/
 /release-assets/
 /web/*
 !/web/installer.html
+!/web/index.html
 coverage/
 test-results/
 playwright-report/

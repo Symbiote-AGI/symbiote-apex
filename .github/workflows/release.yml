@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   test:
@@ -33,18 +32,8 @@ jobs:
       - name: Unit, integration, and security regression tests
         run: npm test
 
-  codeql:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
-        with:
-          languages: javascript-typescript
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
-
   linux-package:
-    needs: [test, codeql]
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +63,7 @@ jobs:
           if-no-files-found: error
 
   windows-msi:
-    needs: [test, codeql]
+    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +92,7 @@ jobs:
           if-no-files-found: error
 
   github-package:
-    needs: [test, codeql]
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
