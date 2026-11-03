@@ -65,14 +65,17 @@ export function buildDiscordSlashCommands(
     {
       name: 'model',
       description: 'Set the active model',
-      options: [{ name: 'model', description: 'Model identifier', required: true }],
+      options: [{ name: 'model', description: 'Model identifier', required: true, autocomplete: true }],
     },
     {
       name: 'provider',
-      description: 'Set the active provider',
-      options: [{ name: 'provider', description: 'Provider name', required: true }],
+      description: 'Choose a provider and model',
+      options: [
+        { name: 'provider', description: 'Provider name', autocomplete: true },
+        { name: 'model', description: 'Model identifier', autocomplete: true },
+      ],
     },
-    { name: 'reset', description: 'Reset this Discord conversation' },
+    { name: 'reset', description: 'Reload config and reset this conversation' },
     { name: 'restart', description: 'Reload config and restart this conversation' },
     ...skills.map(({ name, description }) => ({
       name,

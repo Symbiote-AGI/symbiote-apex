@@ -82,7 +82,9 @@ export class ProcessManager {
     if (!p || p.sessionId !== sessionId) return false;
     p.killed = true;
     if (process.platform === 'win32') {
-      killProcessTree(p.proc);
+      killProcessTree(p.proc)?.once('error', error => {
+        console.error(`[process] Failed to stop process tree for PID ${p.pid}:`, error);
+      });
     } else {
       try { p.proc.kill('SIGTERM'); } catch { /* already dead */ }
       setTimeout(() => { try { p.proc.kill('SIGKILL'); } catch { /* */ } }, 3000);
@@ -106,7 +108,7 @@ export class ProcessManager {
     let killed = 0;
     for (const p of this.processes.values()) {
       if (p.sessionId === sessionId && p.exitCode === null && !p.killed) {
-        this.kill(p.id);
+        this.kill(p.id, sessionId);
         killed++;
       }
     }

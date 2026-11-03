@@ -106,12 +106,17 @@ export const execTool: ToolDefinition = {
         resolve(output);
       };
 
+      const terminate = () => {
+        killProcessTree(proc)?.once('error', error => {
+          console.error(`[exec] Failed to stop process tree for PID ${proc.pid ?? 'unknown'}:`, error);
+        });
+      };
       const onAbort = () => {
-        killProcessTree(proc);
+        terminate();
         finish(`Error: Command aborted.\n${Buffer.concat(chunks).toString('utf-8')}`);
       };
       const timer = setTimeout(() => {
-        killProcessTree(proc);
+        terminate();
         finish(`Error: Command timed out after ${timeoutMs / 1000}s\n${Buffer.concat(chunks).toString('utf-8')}`);
       }, timeoutMs);
       options?.signal?.addEventListener('abort', onAbort, { once: true });

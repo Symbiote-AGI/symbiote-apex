@@ -68,6 +68,28 @@ The setup flow writes every section below. Values shown are the defaults.
 }
 ```
 
+### Optional neural memory
+
+The lexical VDB remains available by default. To add local dense retrieval, install an Ollama embedding model and configure:
+
+```json
+{
+  "memory": {
+    "neural": {
+      "enabled": true,
+      "provider": "ollama",
+      "baseUrl": "http://127.0.0.1:11434",
+      "model": "bge-m3",
+      "lexicalWeight": 0.4,
+      "denseWeight": 0.6,
+      "temporalHalfLifeDays": 180
+    }
+  }
+}
+```
+
+Run `ollama pull bge-m3` before enabling it. Set `model` to `qwen3-embedding:8b` to switch to the larger Qwen3 embedding model. Symbiote keeps the original VDB records and backfills a separate model-specific dense index; switching models does not discard lexical memories.
+
 ### Environment Variable Interpolation
 
 All string values in `symbiote.json` support `${ENV_VAR}` syntax:
@@ -155,6 +177,8 @@ The Web UI runs on a separate port from the HTTP API:
 ```
 
 The web UI listens on all interfaces by default and protects LAN control requests with a generated token stored at `<workspace>/.session/web-access-token`. Set `SYMBIOTE_WEB_TOKEN` to provide a custom token. Configure `webHost`, `webPort`, `apiHost`, and `apiPort` in `symbiote.json`; the HTTP API and Control Room use separate endpoints. See [Web UI](../channels/webchat.md) for details.
+
+Enabling Tailscale-only access changes the Gateway's external bind to the connected Tailscale address while retaining a loopback listener for the desktop app and local health checks. Other tailnet devices still need the web access token.
 
 ## VDB And Memograph
 

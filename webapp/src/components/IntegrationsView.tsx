@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
-  ArrowUpRight,
+  Activity,
+  CheckCircle2,
   CalendarDays,
+  ChartCandlestick,
   Cloud,
   Check,
   CircleAlert,
@@ -14,13 +16,17 @@ import {
   Folder,
   Info,
   LogOut,
+  KeyRound,
   Mail,
   MessageSquare,
   Network,
   Presentation,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+  Terminal,
   Users,
   CheckSquare,
-  RefreshCw,
   Workflow,
 } from 'lucide-react';
 import ActivityOrb from './ActivityOrb';
@@ -35,6 +41,15 @@ import {
 export interface GoogleWorkspaceGrant {
   accessToken: string;
   expiresAt: number;
+}
+
+export interface TailscaleIntegrationStatus {
+  connected: boolean;
+  ip: string | null;
+  error?: string;
+  enabled: boolean;
+  mode: 'lan' | 'tailscale';
+  accessUrl: string;
 }
 
 const serviceIcons = {
@@ -57,15 +72,6 @@ type ServiceState =
 
 type CloudProvider = 'azure' | 'oci' | 'n8n' | 'kaggle';
 export type CloudProviderStatus = Record<CloudProvider, boolean>;
-
-export interface TailscaleIntegrationStatus {
-  enabled: boolean;
-  connected: boolean;
-  ip: string | null;
-  error?: string;
-  mode: 'lan' | 'tailscale';
-  accessUrl: string;
-}
 
 const CLOUD_PROVIDERS: Array<{
   id: CloudProvider;
@@ -107,12 +113,15 @@ const CLOUD_PROVIDERS: Array<{
   },
   {
     id: 'n8n',
-    name: 'n8n (local by default)',
-    description: 'Build, publish, schedule, and inspect workflows with native agent tools and the n8n editor.',
-    info: 'The n8n API key grants broad control over workflows and executions. Symbiote prefers the local .env connection; a saved endpoint and key override it and are encrypted in the local credential vault. Only admin sessions can use n8n tools.',
-    apps: ['Workflow lifecycle', 'Schedule & webhook triggers', 'Execution history', 'Admin-only agent tools'],
+    name: 'n8n Cloud',
+    description: 'Manage and execute workflows through the n8n public API.',
+    info: 'The API key can inspect, create, edit, activate, deactivate, and execute workflows in the configured n8n Cloud workspace. Workflows can affect connected external systems.',
+    apps: ['Workflows', 'Executions', 'Activation & management'],
     icon: Workflow,
-    fields: [],
+    fields: [
+      { id: 'baseUrl', label: 'API root (https://…/api/v1)' },
+      { id: 'apiKey', label: 'API key', secret: true },
+    ],
   },
   {
     id: 'kaggle',
@@ -181,6 +190,8 @@ export default function CloudSpacesView({
   const [accountError, setAccountError] = useState('');
   const [working, setWorking] = useState(false);
   const [services, setServices] = useState<Record<string, ServiceState>>({});
+  const [tailscaleWorking, setTailscaleWorking] = useState(false);
+  const [tailscaleError, setTailscaleError] = useState('');
 
   useEffect(() => observeGoogleUser(currentUser => {
     setUser(currentUser);
@@ -242,6 +253,34 @@ export default function CloudSpacesView({
     }
   };
 
+  const updateTailscaleAccess = async (enabled: boolean) => {
+    setTailscaleWorking(true);
+    setTailscaleError('');
+    try {
+      const status = await request<TailscaleIntegrationStatus>('/api/integrations/tailscale', {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      });
+      onTailscaleStatusChange(status);
+    } catch (failure) {
+      setTailscaleError(failure instanceof Error ? failure.message : 'Tailscale access could not be updated.');
+    } finally {
+      setTailscaleWorking(false);
+    }
+  };
+
+  const refreshTailscaleStatus = async () => {
+    setTailscaleWorking(true);
+    setTailscaleError('');
+    try {
+      onTailscaleStatusChange(await request<TailscaleIntegrationStatus>('/api/integrations/tailscale'));
+    } catch (failure) {
+      setTailscaleError(failure instanceof Error ? failure.message : 'Tailscale status could not be read.');
+    } finally {
+      setTailscaleWorking(false);
+    }
+  };
+
   const authorized = Boolean(grant && grant.expiresAt > Date.now());
   const needsReauthorization = Boolean(grant && !authorized);
   const failedServices = GOOGLE_WORKSPACE_SERVICES.filter(service => services[service.id]?.status === 'offline');
@@ -252,15 +291,41 @@ export default function CloudSpacesView({
         <div>
           <div className="eyebrow">ACCOUNT CONNECTIONS</div>
           <h1>Integrations</h1>
-          <p>Credentials are encrypted locally. Google access stays in memory; cloud secrets are never shown after saving. Connections grant the agent the permissions of those accounts.</p>
+          <p>Credentials are encrypted locally. Saving only replaces fields you enter; blank fields keep their existing values. Connections grant the agent the permissions of these accounts.</p>
         </div>
       </header>
       <div className="integrations-grid" aria-label="Available integrations">
-        <TailscaleIntegrationCard
-          request={request}
-          status={tailscaleStatus}
-          onStatusChange={onTailscaleStatusChange}
-        />
+        <article className="surface-card cloud-provider-card integration-provider-card tailscale-integration-card">
+          <div className="integration-card-header">
+            <span className={`cloud-provider-icon${tailscaleStatus?.connected ? ' cloud-provider-icon-online' : ''}`}><Network size={20} /></span>
+            <div className="integration-card-title">
+              <h2>Tailscale</h2>
+              <span className={`cloud-provider-status${tailscaleStatus?.connected ? ' cloud-provider-status-online' : ''}`}>
+                {tailscaleStatus ? tailscaleStatus.connected ? 'Connected' : 'Not connected' : 'Checking status'}
+              </span>
+              {tailscaleStatus?.ip && <span className="integration-account-name">This device · {tailscaleStatus.ip}</span>}
+            </div>
+            <button className="integration-info" type="button" title="Tailscale access exposes the local Symbiote web interface to devices on your private tailnet. The CLI must be installed and signed in on this device." aria-label="About Tailscale access"><Info size={14} /></button>
+          </div>
+          <p className="tailscale-description">Reach this Symbiote instance from devices on your private tailnet.</p>
+          <div className="integration-card-actions">
+            <button
+              className={`button ${tailscaleStatus?.enabled ? 'button-secondary' : 'button-primary'}`}
+              type="button"
+              onClick={() => void updateTailscaleAccess(!tailscaleStatus?.enabled)}
+              disabled={tailscaleWorking || !tailscaleStatus?.connected}
+            >
+              {tailscaleWorking ? <ActivityOrb label="Updating Tailscale access" compact loading /> : <ShieldCheck size={14} />}
+              {tailscaleStatus?.enabled ? 'Disable tailnet access' : 'Enable tailnet access'}
+            </button>
+            <button className="button button-secondary" type="button" onClick={() => void refreshTailscaleStatus()} disabled={tailscaleWorking}>
+              <RefreshCw size={13} />Refresh
+            </button>
+            {tailscaleStatus?.accessUrl && <a className="button button-secondary" href={tailscaleStatus.accessUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />Open UI</a>}
+          </div>
+          {tailscaleStatus?.accessUrl && <p className="tailscale-address"><span>{tailscaleStatus.enabled ? 'Tailnet address' : 'Local network address'}</span><code>{tailscaleStatus.accessUrl}</code></p>}
+          {(tailscaleError || tailscaleStatus?.error) && <p className="cloud-provider-error" role="status">{tailscaleError || tailscaleStatus?.error}</p>}
+        </article>
         <article className="surface-card cloud-provider-card integration-provider-card">
           <div className="integration-card-header">
             <span className={`cloud-provider-icon${authorized ? ' cloud-provider-icon-online' : ''}`}><GoogleMark /></span>
@@ -315,13 +380,8 @@ export default function CloudSpacesView({
             </div>
           )}
         </article>
-        {CLOUD_PROVIDERS.map(provider => provider.id === 'n8n' ? (
-          <N8nIntegrationCard
-            key={provider.id}
-            request={request}
-            onConfigured={configured => onCloudStatusChange('n8n', configured)}
-          />
-        ) : (
+        <MarketTradingIntegrations request={request} />
+        {CLOUD_PROVIDERS.map(provider => (
           <CloudProviderCard
             key={provider.id}
             provider={provider}
@@ -335,404 +395,237 @@ export default function CloudSpacesView({
   );
 }
 
-function TailscaleIntegrationCard({
-  request,
-  status,
-  onStatusChange,
-}: {
+type Mt5Status = { configured: boolean; terminalPath?: string };
+type Mt5TestResult = { connected: true; account: number; server: string; latencyMs: number; tick: { symbol: string; bid: number; ask: number; time: number } };
+type BinanceStatus = { configured: boolean };
+type BinanceTestResult = { connected: true; accountType: string; canTrade: boolean; latencyMs: number; tick: { symbol: string; bid: number; ask: number; time: number } };
+
+function MarketTradingIntegrations({ request }: {
   request: <T,>(endpoint: string, options?: RequestInit) => Promise<T>;
-  status: TailscaleIntegrationStatus | null;
-  onStatusChange: (status: TailscaleIntegrationStatus) => void;
 }) {
-  const [working, setWorking] = useState(false);
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
-  const connected = Boolean(status?.connected);
-  const enabled = Boolean(status?.enabled);
-
-  const refresh = async () => {
-    setWorking(true);
-    setError('');
-    setMessage('');
-    try {
-      const next = await request<TailscaleIntegrationStatus>('/api/integrations/tailscale');
-      onStatusChange(next);
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Tailscale status could not be refreshed.');
-    } finally {
-      setWorking(false);
-    }
-  };
-
-  const setAccessMode = async () => {
-    if (!status) return;
-    const nextEnabled = !status.enabled;
-    setWorking(true);
-    setError('');
-    setMessage('');
-    try {
-      const next = await request<TailscaleIntegrationStatus>('/api/integrations/tailscale', {
-        method: 'PUT',
-        body: JSON.stringify({ enabled: nextEnabled }),
-      });
-      onStatusChange(next);
-      setMessage(nextEnabled
-        ? 'Tailscale-only access saved. Symbiote will restart to apply the network change.'
-        : 'LAN access saved. Symbiote will restart to restore the configured LAN listener.');
-      if (window.symbioteDesktop?.restartApp) {
-        window.setTimeout(() => {
-          void window.symbioteDesktop?.restartApp().catch(failure => {
-            setError(failure instanceof Error ? failure.message : 'Symbiote could not restart to apply the network change.');
-          });
-        }, 500);
-      } else {
-        await request('/api/integrations/tailscale/restart', { method: 'POST' });
-      }
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Tailscale access settings could not be applied.');
-    } finally {
-      setWorking(false);
-    }
-  };
-
-  return (
-    <article className="surface-card cloud-provider-card integration-provider-card">
-      <div className="integration-card-header">
-        <span className={`cloud-provider-icon${enabled && connected ? ' cloud-provider-icon-online' : ''}`}><Network size={18} /></span>
-        <div className="integration-card-title">
-          <h2>Tailscale</h2>
-          <span className={`cloud-provider-status${enabled && connected ? ' cloud-provider-status-online' : ''}`}>
-            {!status ? 'Checking status' : enabled ? 'Tailnet-only access' : connected ? 'Connected · LAN mode' : 'Not connected'}
-          </span>
-        </div>
-        <button className="integration-info" type="button" title="Tailscale provides encrypted private networking between your devices. Enabling it binds the Symbiote web listener only to this device's Tailscale IPv4 address, replacing the LAN listener. Other tailnet devices still need the Symbiote web access token." aria-label="About Tailscale access"><Info size={14} /></button>
-      </div>
-      <div className="n8n-connection-details">
-        <span>{enabled ? 'Tailnet address' : 'Current access mode'}</span>
-        <code>{status?.accessUrl || (enabled ? 'Unavailable while Tailscale is disconnected' : 'Tailscale status unavailable')}</code>
-        <p>{enabled
-          ? connected
-            ? 'The web listener is restricted to this Tailscale address; LAN access is disabled.'
-            : 'Tailscale-only mode remains enabled. The web listener is limited to this computer until Tailscale reconnects; LAN access is disabled.'
-          : 'LAN remains the default. Enabling Tailscale replaces the LAN listener after restart.'}</p>
-      </div>
-      {status?.ip && <div className="integration-provider-apps" aria-label="Tailscale connection details">
-        <span className="integration-provider-app"><Check size={12} />Tailscale IPv4 {status.ip}</span>
-        <span className="integration-provider-app"><Check size={12} />Private tailnet routing</span>
-      </div>}
-      {!connected && status?.error && <p className="cloud-provider-error" role="status"><CircleAlert size={13} />{status.error}</p>}
-      {message && <p className="cloud-provider-message" role="status">{message}</p>}
-      {error && <p className="cloud-provider-error" role="alert"><CircleAlert size={13} />{error}</p>}
-      <div className="integration-card-actions">
-        <button className="button button-secondary" type="button" onClick={() => void refresh()} disabled={working}>
-          <RefreshCw size={14} />Refresh status
-        </button>
-        <button className={enabled ? 'button button-secondary' : 'button button-primary'} type="button" onClick={() => void setAccessMode()} disabled={working || !status || (!enabled && !connected)}>
-          {working ? <ActivityOrb label="Updating Tailscale access" compact loading /> : enabled ? <LogOut size={14} /> : <Network size={14} />}
-          {enabled ? 'Return to LAN access' : 'Use Tailscale only'}
-        </button>
-      </div>
-    </article>
-  );
-}
-
-interface N8nConnectionInfo {
-  configured: boolean;
-  source: 'local-env' | 'saved-override' | 'none';
-  apiBaseUrl: string;
-  editorUrl: string;
-  isLocal: boolean;
-}
-
-function isN8nConnectionInfo(value: unknown): value is N8nConnectionInfo {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return 'configured' in value
-    && typeof value.configured === 'boolean'
-    && 'source' in value
-    && (value.source === 'local-env' || value.source === 'saved-override' || value.source === 'none')
-    && 'apiBaseUrl' in value
-    && typeof value.apiBaseUrl === 'string'
-    && 'editorUrl' in value
-    && typeof value.editorUrl === 'string'
-    && 'isLocal' in value
-    && typeof value.isLocal === 'boolean';
-}
-
-function N8nIntegrationCard({
-  request,
-  onConfigured,
-}: {
-  request: <T,>(endpoint: string, options?: RequestInit) => Promise<T>;
-  onConfigured: (configured: boolean) => void;
-}) {
-  const endpoint = '/api/integrations/n8n';
-  const [connection, setConnection] = useState<N8nConnectionInfo | null>(null);
-  const [baseUrl, setBaseUrl] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [working, setWorking] = useState(true);
-  const [health, setHealth] = useState<'unknown' | 'online' | 'offline'>('unknown');
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editorLoaded, setEditorLoaded] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  const isSavedOverride = connection?.source === 'saved-override';
-  const onConfiguredRef = useRef(onConfigured);
-  onConfiguredRef.current = onConfigured;
-
-  const getConnectionInfo = useCallback(async () => {
-    const result = await request<unknown>(endpoint);
-    if (!isN8nConnectionInfo(result)) {
-      throw new Error('The gateway does not provide n8n connection details yet. Rebuild and restart it to activate the updated integration.');
-    }
-    return result;
-  }, [endpoint, request]);
-
-  const reloadConnection = useCallback(async () => {
-    setWorking(true);
-    setError('');
-    try {
-      const next = await getConnectionInfo();
-      setConnection(next);
-      setBaseUrl(next.source === 'saved-override' ? next.apiBaseUrl : '');
-      onConfiguredRef.current(next.configured);
-      return next;
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Could not read n8n connection settings.');
-      return null;
-    } finally {
-      setWorking(false);
-    }
-  }, [getConnectionInfo]);
+  const [mt5, setMt5] = useState<Mt5Status | null>(null);
+  const [binance, setBinance] = useState<BinanceStatus | null>(null);
+  const [mt5Fields, setMt5Fields] = useState({ login: '', password: '', server: '' });
+  const [terminalPath, setTerminalPath] = useState('');
+  const [binanceFields, setBinanceFields] = useState({ apiKey: '', apiSecret: '' });
+  const [mt5Result, setMt5Result] = useState<Mt5TestResult | null>(null);
+  const [binanceResult, setBinanceResult] = useState<BinanceTestResult | null>(null);
+  const [mt5Error, setMt5Error] = useState('');
+  const [binanceError, setBinanceError] = useState('');
+  const [mt5Message, setMt5Message] = useState('');
+  const [binanceMessage, setBinanceMessage] = useState('');
+  const [mt5Busy, setMt5Busy] = useState(false);
+  const [binanceBusy, setBinanceBusy] = useState(false);
+  const [terminalBusy, setTerminalBusy] = useState(false);
 
   useEffect(() => {
-    void reloadConnection();
-  }, [reloadConnection]);
+    let active = true;
+    void request<Mt5Status>('/api/integrations/mt5')
+      .then(result => {
+        if (!active) return;
+        setMt5(result);
+        setTerminalPath(result.terminalPath ?? '');
+      })
+      .catch(failure => { if (active) setMt5Error(failure instanceof Error ? failure.message : 'MetaTrader 5 status is unavailable.'); });
+    void request<BinanceStatus>('/api/integrations/binance')
+      .then(result => { if (active) setBinance(result); })
+      .catch(failure => { if (active) setBinanceError(failure instanceof Error ? failure.message : 'Binance status is unavailable.'); });
+    return () => { active = false; };
+  }, [request]);
 
-  const testConnection = async () => {
-    setWorking(true);
-    setMessage('');
-    setError('');
-    setHealth('unknown');
-    try {
-      await request(`${endpoint}/test`, { method: 'POST' });
-      setHealth('online');
-      setMessage('Connection test succeeded.');
-    } catch (failure) {
-      setHealth('offline');
-      setError(failure instanceof Error ? failure.message : 'n8n connection test failed.');
-    } finally {
-      setWorking(false);
-    }
-  };
-
-  const saveOverride = async (event: FormEvent<HTMLFormElement>) => {
+  const saveMt5 = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!connection) {
-      setError('Connection settings are unavailable. Refresh the gateway before changing n8n credentials.');
-      return;
-    }
-    if (!baseUrl.trim()) {
-      setError('Enter an n8n API root, including /api/v1.');
-      return;
-    }
-    if (!apiKey.trim() && !isSavedOverride) {
-      setError('Enter an API key to save a new n8n override.');
-      return;
-    }
-    setWorking(true);
-    setMessage('');
-    setError('');
+    setMt5Busy(true);
+    setMt5Error('');
+    setMt5Message('');
+    setMt5Result(null);
     try {
-      await request(endpoint, {
+      await request('/api/integrations/mt5', { method: 'POST', body: JSON.stringify(mt5Fields) });
+      setMt5(current => ({ configured: true, terminalPath: current?.terminalPath }));
+      setMt5Fields({ login: '', password: '', server: '' });
+      setMt5Message('Account credentials were saved to the encrypted local vault.');
+    } catch (failure) {
+      setMt5Error(failure instanceof Error ? failure.message : 'MetaTrader 5 credentials could not be saved.');
+    } finally {
+      setMt5Busy(false);
+    }
+  };
+
+  const testMt5 = async () => {
+    setMt5Busy(true);
+    setMt5Error('');
+    setMt5Message('');
+    try {
+      const result = await request<Mt5TestResult>('/api/integrations/mt5/test', {
         method: 'POST',
-        body: JSON.stringify({ baseUrl: baseUrl.trim(), ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) }),
+        body: JSON.stringify({ symbol: 'XAUUSD' }),
       });
-      setConnection(null);
-      setHealth('unknown');
-      setApiKey('');
+      setMt5Result(result);
+      setMt5Message('Connection and live tick test succeeded.');
     } catch (failure) {
-      setError(`Could not save the override: ${failure instanceof Error ? failure.message : 'Unknown error.'}`);
-      setWorking(false);
-      return;
-    }
-    try {
-      const next = await getConnectionInfo();
-      setConnection(next);
-      onConfigured(next.configured);
-    } catch (failure) {
-      setError(`Override saved, but connection settings could not be refreshed: ${failure instanceof Error ? failure.message : 'Unknown error.'}`);
-      setWorking(false);
-      return;
-    }
-    try {
-      await request(`${endpoint}/test`, { method: 'POST' });
-      setHealth('online');
-      setMessage('Override saved and connection test succeeded.');
-    } catch (failure) {
-      setHealth('offline');
-      setError(`Override saved, but the connection test failed: ${failure instanceof Error ? failure.message : 'Unknown error.'}`);
+      setMt5Error(failure instanceof Error ? failure.message : 'MetaTrader 5 connection test failed.');
     } finally {
-      setWorking(false);
+      setMt5Busy(false);
     }
   };
 
-  const removeOverride = async () => {
-    if (!window.confirm('Remove the saved n8n endpoint and API key? Symbiote will fall back to the local .env settings.')) return;
-    setWorking(true);
-    setMessage('');
-    setError('');
+  const saveTerminal = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setTerminalBusy(true);
+    setMt5Error('');
+    setMt5Message('');
     try {
-      await request(endpoint, { method: 'DELETE' });
-      setConnection(null);
-      setHealth('unknown');
-      setBaseUrl('');
-      setApiKey('');
+      const result = await request<Mt5Status>('/api/integrations/mt5/terminal', {
+        method: 'PUT',
+        body: JSON.stringify({ terminalPath }),
+      });
+      setMt5(result);
+      setTerminalPath(result.terminalPath ?? '');
+      setMt5Message('Terminal path saved to the local environment configuration.');
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Could not remove the saved n8n override.');
-      setWorking(false);
-      return;
-    }
-    try {
-      const next = await request<N8nConnectionInfo>(endpoint);
-      if (!isN8nConnectionInfo(next)) {
-        throw new Error('The gateway did not return valid n8n connection details.');
-      }
-      setConnection(next);
-      onConfigured(next.configured);
-      setMessage(next.configured ? 'Saved override removed; using the local .env connection.' : 'Saved override removed. n8n is not configured.');
-    } catch (failure) {
-      setError(`Saved override removed, but connection settings could not be refreshed: ${failure instanceof Error ? failure.message : 'Unknown error.'}`);
+      setMt5Error(failure instanceof Error ? failure.message : 'MetaTrader 5 terminal path could not be saved.');
     } finally {
-      setWorking(false);
+      setTerminalBusy(false);
     }
   };
 
-  const statusLabel = !connection
-    ? working ? 'Checking settings' : 'Settings unavailable'
-    : health === 'online'
-      ? 'Connected'
-      : health === 'offline'
-        ? 'Connection failed'
-        : connection.configured
-          ? 'Configured'
-          : 'Not configured';
-  const sourceLabel = connection
-    ? connection.source === 'saved-override'
-      ? 'Encrypted saved override'
-      : connection.source === 'local-env'
-        ? 'Local .env'
-        : 'Default local endpoint'
-    : 'Connection source unavailable';
+  const launchMt5 = async () => {
+    setTerminalBusy(true);
+    setMt5Error('');
+    setMt5Message('');
+    try {
+      const result = await request<{ launched: true; pid?: number }>('/api/integrations/mt5/launch', { method: 'POST', body: '{}' });
+      setMt5Message(`MetaTrader 5 launched${result.pid ? ` (process ${result.pid})` : ''}.`);
+    } catch (failure) {
+      setMt5Error(failure instanceof Error ? failure.message : 'MetaTrader 5 could not be launched.');
+    } finally {
+      setTerminalBusy(false);
+    }
+  };
 
-  return (
-    <article className="surface-card cloud-provider-card integration-provider-card n8n-integration-card">
+  const disconnectMt5 = async () => {
+    setMt5Busy(true);
+    setMt5Error('');
+    setMt5Message('');
+    try {
+      const result = await request<Mt5Status>('/api/integrations/mt5', { method: 'DELETE' });
+      setMt5(current => ({ configured: result.configured, terminalPath: result.terminalPath ?? current?.terminalPath }));
+      setMt5Result(null);
+      setMt5Message('MetaTrader 5 account credentials were removed.');
+    } catch (failure) {
+      setMt5Error(failure instanceof Error ? failure.message : 'MetaTrader 5 credentials could not be removed.');
+    } finally {
+      setMt5Busy(false);
+    }
+  };
+
+  const saveBinance = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBinanceBusy(true);
+    setBinanceError('');
+    setBinanceMessage('');
+    setBinanceResult(null);
+    try {
+      await request('/api/integrations/binance', { method: 'POST', body: JSON.stringify(binanceFields) });
+      setBinance({ configured: true });
+      setBinanceFields({ apiKey: '', apiSecret: '' });
+      setBinanceMessage('API credentials were saved to the encrypted local vault.');
+    } catch (failure) {
+      setBinanceError(failure instanceof Error ? failure.message : 'Binance credentials could not be saved.');
+    } finally {
+      setBinanceBusy(false);
+    }
+  };
+
+  const testBinance = async () => {
+    setBinanceBusy(true);
+    setBinanceError('');
+    setBinanceMessage('');
+    try {
+      const result = await request<BinanceTestResult>('/api/integrations/binance/test', { method: 'POST', body: '{}' });
+      setBinanceResult(result);
+      setBinanceMessage('Authenticated account and live BTC/USDT tick test succeeded.');
+    } catch (failure) {
+      setBinanceError(failure instanceof Error ? failure.message : 'Binance connection test failed.');
+    } finally {
+      setBinanceBusy(false);
+    }
+  };
+
+  const disconnectBinance = async () => {
+    setBinanceBusy(true);
+    setBinanceError('');
+    setBinanceMessage('');
+    try {
+      const result = await request<BinanceStatus>('/api/integrations/binance', { method: 'DELETE' });
+      setBinance(result);
+      setBinanceResult(null);
+      setBinanceMessage('Binance API credentials were removed.');
+    } catch (failure) {
+      setBinanceError(failure instanceof Error ? failure.message : 'Binance credentials could not be removed.');
+    } finally {
+      setBinanceBusy(false);
+    }
+  };
+
+  return <>
+    <article className="surface-card cloud-provider-card integration-provider-card market-integration-card">
       <div className="integration-card-header">
-        <span className={`cloud-provider-icon${health === 'online' ? ' cloud-provider-icon-online' : ''}`}><Workflow size={18} /></span>
+        <span className={`cloud-provider-icon${mt5?.configured ? ' cloud-provider-icon-online' : ''}`}><ChartCandlestick size={20} /></span>
         <div className="integration-card-title">
-          <h2>n8n (local by default)</h2>
-          <span className={`cloud-provider-status${health === 'online' ? ' cloud-provider-status-online' : ''}`} aria-live="polite">{statusLabel}</span>
+          <h2>MetaTrader 5</h2>
+          <span className={`cloud-provider-status${mt5?.configured ? ' cloud-provider-status-online' : ''}`}>{mt5?.configured ? 'Account configured' : 'Not connected'}</span>
+          {mt5Result && <span className="integration-account-name">Account {mt5Result.account} · {mt5Result.server}</span>}
         </div>
-        <button className="integration-info" type="button" title={CLOUD_PROVIDERS.find(provider => provider.id === 'n8n')?.info} aria-label="About n8n access and permissions"><Info size={14} /></button>
+        <span className="integration-info" title="The account credentials are stored in the encrypted local credential vault. The connection test reads a live XAUUSD tick and does not place an order."><ShieldCheck size={14} /></span>
       </div>
-
-      <div className="n8n-connection-details">
-        <span>{sourceLabel}</span>
-        <code>{connection?.apiBaseUrl ?? 'Connection details unavailable'}</code>
-        {connection?.source === 'local-env' && <p>The API key is read from Symbiote .env and is never displayed here.</p>}
-        {connection?.source === 'saved-override' && <p>The saved API key is encrypted in the local credential vault and is never displayed here.</p>}
-        {connection?.source === 'none' && <p>Set N8N_API_KEY in Symbiote .env or configure a secured override below.</p>}
-      </div>
-
-      <div className="integration-provider-apps" aria-label="n8n capabilities">
-        {['Workflow lifecycle', 'Schedule & webhook triggers', 'Execution history', 'Admin-only agent tools'].map(app => (
-          <span className="integration-provider-app" key={app}><Check size={12} />{app}</span>
-        ))}
-      </div>
-
-      <div className="n8n-agent-note">
-        <Workflow size={15} />
-        <p><strong>Agent workflow tools</strong> are available only in admin sessions. Recurring automations belong in n8n Schedule Trigger workflows; publish a workflow to activate its schedule.</p>
-      </div>
-
-      <div className="integration-card-actions n8n-actions">
-        <button className="button button-primary" type="button" onClick={() => void testConnection()} disabled={working || !connection?.configured}>
-          {working ? <ActivityOrb label="Testing n8n connection" compact loading /> : <RefreshCw size={14} />}
-          Test connection
-        </button>
-        {connection?.editorUrl && (
-          <a className="button button-secondary" href={connection.editorUrl} target="_blank" rel="noopener noreferrer">
-            <ExternalLink size={14} />Open editor
-          </a>
-        )}
-        {connection?.isLocal && (
-          <button className="button button-secondary" type="button" onClick={() => { setEditorOpen(open => !open); setEditorLoaded(false); }}>
-            {editorOpen ? 'Close embedded editor' : 'Embed local editor'}
-          </button>
-        )}
-        <button className="button button-secondary" type="button" onClick={() => void reloadConnection()} disabled={working}>
-          <RefreshCw size={13} />Refresh
-        </button>
-      </div>
-
-      {editorOpen && connection?.isLocal && (
-        <section className="n8n-editor-panel" aria-label="Embedded local n8n editor">
-          <div className="n8n-editor-heading">
-            <div><strong>Local n8n editor</strong><span>Loaded only when requested</span></div>
-            <a href={connection.editorUrl} target="_blank" rel="noopener noreferrer" aria-label="Open n8n editor in a new tab"><ArrowUpRight size={15} /></a>
-          </div>
-          {!editorLoaded && <p className="n8n-editor-loading">Loading the local editor…</p>}
-          <iframe
-            title="Local n8n workflow editor"
-            src={connection.editorUrl}
-            loading="lazy"
-            onLoad={() => setEditorLoaded(true)}
-            referrerPolicy="no-referrer"
-            sandbox="allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
-          />
-        </section>
-      )}
-
-      <details className="cloud-provider-credentials n8n-override">
-        <summary>{isSavedOverride ? 'Manage saved endpoint override' : 'Configure a remote n8n override'}</summary>
-        {!connection && <p className="n8n-override-unavailable">Connection details are unavailable. Rebuild and restart the gateway before changing n8n credentials.</p>}
-        <form onSubmit={event => void saveOverride(event)} className="cloud-provider-form">
-          <label className="cloud-provider-field n8n-override-url">
-            <span>n8n REST API root (for example, https://host/api/v1)</span>
-            <input
-              type="url"
-              value={baseUrl}
-              onChange={event => setBaseUrl(event.target.value)}
-              placeholder="https://n8n.example.com/api/v1"
-              autoComplete="url"
-              disabled={!connection || working}
-              required
-            />
-          </label>
-          <label className="cloud-provider-field n8n-override-key">
-            <span>{isSavedOverride ? 'Replace API key (leave blank to keep the saved key)' : 'n8n REST API key'}</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={event => setApiKey(event.target.value)}
-              placeholder={isSavedOverride ? 'Stored securely; value is not shown' : 'Paste API key'}
-              autoComplete="new-password"
-              disabled={!connection || working}
-              required={!isSavedOverride}
-            />
-          </label>
-          <div className="cloud-provider-actions">
-            <button className="button button-primary" type="submit" disabled={!connection || working || !baseUrl.trim() || (!apiKey.trim() && !isSavedOverride)}>
-              {working ? <ActivityOrb label="Saving n8n override" compact loading /> : <Check size={14} />}
-              Save & test override
-            </button>
-            {isSavedOverride && <button className="button button-secondary" type="button" onClick={() => void removeOverride()} disabled={working}><LogOut size={14} />Revert to local settings</button>}
-          </div>
-        </form>
-      </details>
-      {message && <p className="cloud-provider-message" role="status">{message}</p>}
-      {error && <p className="cloud-provider-error" role="alert"><CircleAlert size={13} />{error}</p>}
+      <form className="market-integration-form" onSubmit={event => void saveMt5(event)}>
+        <label>Account<input inputMode="numeric" autoComplete="username" value={mt5Fields.login} onChange={event => setMt5Fields(current => ({ ...current, login: event.target.value }))} placeholder={mt5?.configured ? 'Saved · leave blank to keep' : 'MT5 account number'} required={!mt5?.configured} /></label>
+        <label>Password<input type="password" autoComplete="new-password" value={mt5Fields.password} onChange={event => setMt5Fields(current => ({ ...current, password: event.target.value }))} placeholder={mt5?.configured ? 'Saved · leave blank to keep' : 'MT5 account password'} required={!mt5?.configured} /></label>
+        <label>Server<input autoComplete="off" value={mt5Fields.server} onChange={event => setMt5Fields(current => ({ ...current, server: event.target.value }))} placeholder={mt5?.configured ? 'Saved · leave blank to keep' : 'Broker server name'} required={!mt5?.configured} /></label>
+        <div className="market-integration-actions">
+          <button className="button button-primary" type="submit" disabled={mt5Busy}><KeyRound size={13} />Save account</button>
+          <button className="button button-secondary" type="button" onClick={() => void testMt5()} disabled={mt5Busy || !mt5?.configured}><Activity size={13} />Test tick</button>
+          {mt5?.configured && <button className="button button-secondary" type="button" onClick={() => void disconnectMt5()} disabled={mt5Busy}>Disconnect</button>}
+        </div>
+      </form>
+      {mt5Result && <p className="market-integration-result"><CheckCircle2 size={13} />{mt5Result.tick.symbol} bid {mt5Result.tick.bid} · ask {mt5Result.tick.ask} · {mt5Result.latencyMs} ms</p>}
+      {mt5Message && <p className="cloud-provider-message" role="status">{mt5Message}</p>}
+      {mt5Error && <p className="cloud-provider-error" role="alert">{mt5Error}</p>}
+      <form className="market-terminal-form" onSubmit={event => void saveTerminal(event)}>
+        <label><Terminal size={13} />Terminal executable path<input value={terminalPath} onChange={event => setTerminalPath(event.target.value)} placeholder="C:\Program Files\MetaTrader 5\terminal64.exe" required /></label>
+        <div className="market-integration-actions">
+          <button className="button button-secondary" type="submit" disabled={terminalBusy || !terminalPath.trim()}><Server size={13} />Save path</button>
+          <button className="button button-secondary" type="button" onClick={() => void launchMt5()} disabled={terminalBusy || !mt5?.terminalPath}><Activity size={13} />Launch terminal</button>
+        </div>
+      </form>
     </article>
-  );
+
+    <article className="surface-card cloud-provider-card integration-provider-card market-integration-card">
+      <div className="integration-card-header">
+        <span className={`cloud-provider-icon${binance?.configured ? ' cloud-provider-icon-online' : ''}`}><KeyRound size={19} /></span>
+        <div className="integration-card-title">
+          <h2>Binance</h2>
+          <span className={`cloud-provider-status${binance?.configured ? ' cloud-provider-status-online' : ''}`}>{binance?.configured ? 'API configured' : 'Not connected'}</span>
+          {binanceResult && <span className="integration-account-name">{binanceResult.accountType} · trading {binanceResult.canTrade ? 'enabled' : 'disabled'}</span>}
+        </div>
+        <span className="integration-info" title="Store an API key with read and trading permissions only. Withdrawal permissions are not required. The test checks authenticated account access and a public BTC/USDT tick."><ShieldCheck size={14} /></span>
+      </div>
+      <form className="market-integration-form" onSubmit={event => void saveBinance(event)}>
+        <label>API key<input autoComplete="off" value={binanceFields.apiKey} onChange={event => setBinanceFields(current => ({ ...current, apiKey: event.target.value }))} placeholder={binance?.configured ? 'Saved · leave blank to keep' : 'Binance API key'} required={!binance?.configured} /></label>
+        <label>API secret<input type="password" autoComplete="new-password" value={binanceFields.apiSecret} onChange={event => setBinanceFields(current => ({ ...current, apiSecret: event.target.value }))} placeholder={binance?.configured ? 'Saved · leave blank to keep' : 'Binance API secret'} required={!binance?.configured} /></label>
+        <div className="market-integration-actions">
+          <button className="button button-primary" type="submit" disabled={binanceBusy}><KeyRound size={13} />Save API credentials</button>
+          <button className="button button-secondary" type="button" onClick={() => void testBinance()} disabled={binanceBusy || !binance?.configured}><RefreshCw size={13} />Test connection</button>
+          {binance?.configured && <button className="button button-secondary" type="button" onClick={() => void disconnectBinance()} disabled={binanceBusy}>Disconnect</button>}
+        </div>
+      </form>
+      {binanceResult && <p className="market-integration-result"><CheckCircle2 size={13} />{binanceResult.tick.symbol} bid {binanceResult.tick.bid} · ask {binanceResult.tick.ask} · {binanceResult.latencyMs} ms</p>}
+      {binanceMessage && <p className="cloud-provider-message" role="status">{binanceMessage}</p>}
+      {binanceError && <p className="cloud-provider-error" role="alert">{binanceError}</p>}
+      <small className="integration-account-name">Credentials remain local and are never shown again after saving. Trading orders still require an explicit action from Markets.</small>
+    </article>
+  </>;
 }
 
 function CloudProviderCard({

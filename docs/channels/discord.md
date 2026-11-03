@@ -53,6 +53,12 @@ When `toolProgress` is enabled (default), Symbiote uses one progress message tha
 
 The bot's Discord activity changes between thinking, `🧩 Reasoning...` when the provider emits a reasoning-step event, tool-specific activity, and writing a response. Discord bot accounts cannot publish user-style Custom Status activities, so Symbiote uses a supported Playing activity whose name is the phase label. The status reflects the phase only; it never includes reasoning text. This presence indicator is independent of the progress message.
 
+## Slash commands
+
+Slash commands are available to configured owners. `/provider` with no arguments opens a provider picker, then discovers and presents models for the selected provider. You can also use its optional `provider` and `model` fields directly; `/model` autocompletes models for the active provider. Provider/model selections are saved to `symbiote.json` and hot-reloaded without restarting the Gateway.
+
+`/reset` reloads `symbiote.json` and clears the current Discord conversation. `/restart` does the same reload and conversation reset. Neither command restarts the entire Gateway process.
+
 ## Policies
 
 ### DM Policy

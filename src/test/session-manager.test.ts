@@ -195,3 +195,56 @@ test('channel routes survive session-manager restarts and remain adapter-scoped'
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('session deletion removes active, archived, and routed state and verifies cleanup', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'symbiote-session-delete-'));
+  try {
+    const manager = new SessionManager(directory);
+    const session = manager.create('delete-cleanup-test');
+    session.messages = Array.from({ length: 25 }, (_, index) => ({
+      role: index % 2 ? 'assistant' as const : 'user' as const,
+      content: `Conversation message ${index} with enough text to be archived safely.`,
+    }));
+    manager.save(session);
+    assert.ok(manager.archive(session.id, 2) > 0);
+    assert.equal(manager.archiveSession(session.id), true);
+    manager.create(session.id);
+    manager.saveRoute({
+      channelType: 'discord',
+      chatId: 'delete-room',
+      sessionId: session.id,
+      lastActive: Date.now(),
+    });
+
+    assert.equal(manager.delete(session.id), true);
+    assert.equal(fs.existsSync(path.join(directory, `${session.id}.json`)), false);
+    assert.equal(fs.readdirSync(path.join(directory, 'archive')).some(file =>
+      file === `${session.id}.json` || file.startsWith(`${session.id}-`),
+    ), false);
+    assert.equal(manager.loadRoutes().some(route => route.sessionId === session.id), false);
+    assert.equal(manager.delete(session.id), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('session deletion surfaces filesystem failures instead of reporting success', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'symbiote-session-delete-failure-'));
+  const unlink = fs.unlinkSync;
+  try {
+    const manager = new SessionManager(directory);
+    const session = manager.create('delete-failure');
+    fs.unlinkSync = ((filePath: fs.PathLike) => {
+      if (String(filePath) === path.join(directory, 'delete-failure.json')) {
+        throw Object.assign(new Error('File is locked.'), { code: 'EPERM' });
+      }
+      return unlink(filePath);
+    }) as typeof fs.unlinkSync;
+
+    assert.throws(() => manager.delete(session.id), SessionPersistenceError);
+    assert.equal(fs.existsSync(path.join(directory, 'delete-failure.json')), true);
+  } finally {
+    fs.unlinkSync = unlink;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

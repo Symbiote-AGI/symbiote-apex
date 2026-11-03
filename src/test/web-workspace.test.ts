@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { readWorkspaceIdentity, updateWorkspaceIdentity } from '../agent/workspace-identity.js';
 import { createWorkspaceSessionManager, SessionManager } from '../sessions/manager.js';
 import { createWorkspaceTaskTool } from '../tools/builtin/workspace-tasks.js';
@@ -38,6 +39,7 @@ test('run metadata and colon-containing agent sessions survive a manager restart
 test('workspace APIs validate tasks and expose real run and agent controls', async () => {
   const started: Array<{ name?: string; prompt: string; sessionId: string; trustedAdminContext?: boolean }> = [];
   const chatAdminContexts: boolean[] = [];
+  let renamedSession: { id: string; label: string } | undefined;
   const controlled: Array<{ id: string; action: 'stop' | 'steer'; message?: string }> = [];
   const guided: Array<{ id: string; message: string }> = [];
   const identityUpdates: Array<{ name: string; emoji: string; soulContent: string; agentsContent: string; instructions: string }> = [];
@@ -109,7 +111,7 @@ test('workspace APIs validate tasks and expose real run and agent controls', asy
       return updateDownload;
     },
     getUpdateInstallerPath: () => updateInstallerPath,
-    getConfig: () => ({}),
+    getConfig: () => ({ name: 'Symbiant', agentName: 'Symbiant' }),
     getAppearanceSettings: () => ({ settings: appearanceSettings, initialized: true }),
     updateAppearanceSettings: settings => appearanceSettings = validateAppearanceSettings(settings),
     getSessions: () => [],
@@ -180,6 +182,11 @@ test('workspace APIs validate tasks and expose real run and agent controls', asy
       updatedAt: 1,
       posts: [],
     } satisfies AgentThread),
+    createThreadTopic: id => ({
+      id, title: 'Thread', scope: 'open', participants: [], externalContactIds: [],
+      createdBy: { type: 'user', id: 'user' }, createdAt: 1, updatedAt: 2, posts: [],
+      topics: [{ id: 'topic-1', title: 'Topic', createdByAgentId: 'user', reviewerAgentId: 'main', createdAt: 1, updatedAt: 1, lastReviewedAt: 1 }],
+    }),
     postThreadMessage: id => ({
       id, title: 'Thread', scope: 'open', participants: [], externalContactIds: [],
       createdBy: { type: 'user', id: 'user' }, createdAt: 1, updatedAt: 2,
@@ -211,6 +218,11 @@ test('workspace APIs validate tasks and expose real run and agent controls', asy
       return { text: 'Hello' };
     },
     interruptSession: id => id === 'web-session',
+    setSessionLabel: (id, label) => {
+      if (id !== 'web-session') return false;
+      renamedSession = { id, label };
+      return true;
+    },
     getRuns: () => [{ id: 'run-1', status: 'running' }],
     startRun: request => {
       started.push(request);
@@ -267,6 +279,30 @@ test('workspace APIs validate tasks and expose real run and agent controls', asy
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   try {
+    const nativeFallback = await fetch(`${baseUrl}/native`);
+    assert.equal(nativeFallback.status, 200);
+    assert.match(nativeFallback.headers.get('content-type') ?? '', /text\/html/);
+    const nativeHtml = await nativeFallback.text();
+    assert.match(nativeHtml, /SYMBIOTE — Recovery UI/);
+    assert.match(nativeHtml, /no app bundle required/);
+    assert.match(nativeHtml, /@media \(max-width: 760px\)/);
+    assert.doesNotMatch(nativeHtml, /<script[^>]+src=/i);
+
+    for (const agentName of [undefined, '   ']) {
+      const wakeRequest = await fetch(`${baseUrl}/api/voice/transcribe`, {
+        method: 'POST',
+        headers: { origin: baseUrl, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          audioBase64: 'YQ==',
+          mimeType: 'unsupported/audio',
+          mode: 'wake',
+          ...(agentName === undefined ? {} : { agentName }),
+        }),
+      });
+      assert.equal(wakeRequest.status, 400);
+      assert.match((await wakeRequest.json()).error, /supported audio recording/);
+    }
+
     const rejectedRestart = await fetch(`${baseUrl}/api/gateway/restart`, {
       method: 'POST',
       headers: { origin: 'https://untrusted.example' },
@@ -672,6 +708,20 @@ test('workspace APIs validate tasks and expose real run and agent controls', asy
     assert.equal(interruptResponse.status, 200);
     assert.deepEqual(await interruptResponse.json(), { interrupted: true });
 
+    const renameResponse = await fetch(`${baseUrl}/api/sessions/web-session/label`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ label: '  Project review  ' }),
+    });
+    assert.equal(renameResponse.status, 200);
+    assert.deepEqual(renamedSession, { id: 'web-session', label: 'Project review' });
+    const invalidRename = await fetch(`${baseUrl}/api/sessions/web-session/label`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ label: '  ' }),
+    });
+    assert.equal(invalidRename.status, 400);
+
     const runsResponse = await fetch(`${baseUrl}/api/runs`);
     assert.equal(runsResponse.status, 200);
     assert.deepEqual(await runsResponse.json(), [{ id: 'run-1', status: 'running' }]);
@@ -852,5 +902,55 @@ test('workspace sessions migrate to .session and archived conversations leave ac
     assert.equal(fs.existsSync(path.join(manager.directory, 'archive', 'web-conversation.json')), true);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('web server can bind loopback alongside a Tailscale-only interface', async () => {
+  const server = startWebServer(0, '127.0.0.1', undefined, ['127.0.0.2']);
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const additionalUrl = `http://127.0.0.2:${address.port}/api/not-found`;
+
+  try {
+    let response: Response | undefined;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        response = await fetch(additionalUrl);
+        break;
+      } catch (failure) {
+        if (attempt === 19) throw failure;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+    assert.ok(response);
+    assert.equal(response.status, 404);
+    await response.text();
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close(error => error ? reject(error) : resolve());
+    });
+  }
+});
+
+test('web server serves MapLibre module workers with a JavaScript MIME type', async () => {
+  const assetsDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../webapp/dist/assets');
+  const workerFile = fs.readdirSync(assetsDirectory).find(file => /^maplibre-gl-worker-[\w-]+\.mjs$/.test(file));
+  assert.ok(workerFile, 'MapLibre module worker should be present in the web build');
+
+  const server = startWebServer(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/assets/${workerFile}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'text/javascript');
+    await response.body?.cancel();
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close(error => error ? reject(error) : resolve());
+    });
   }
 });

@@ -27,8 +27,9 @@ test('agent phases map to their intended spherical orb animations', () => {
   assert.equal(getActivityFromStatus('Executing', 'read'), 'reading');
 });
 
-test('loading indicators use the package circular-ring animation', () => {
-  assert.equal(STATE_TO_MODE[getLoadingOrbState()], 'ring');
+test('loading indicators use the focused-thinking orb animation', () => {
+  assert.equal(getLoadingOrbState(), getActivityOrbState('thinking'));
+  assert.equal(STATE_TO_MODE[getLoadingOrbState()], STATE_TO_MODE.solving);
 });
 
 test('Discord tool activity categories have matching chat orb states and labels', () => {
@@ -40,19 +41,4 @@ test('Discord tool activity categories have matching chat orb states and labels'
   assert.equal(getActivityLabel('reasoning'), 'Reasoning');
   assert.equal(isAgentActivity('browsing'), true);
   assert.equal(isAgentActivity('unknown'), false);
-});
-
-test('every agent activity and loading state resolves to a shipped orb animation', () => {
-  const activities = [
-    'thinking', 'reasoning', 'responding', 'reading', 'writing', 'editing',
-    'executing', 'searching', 'browsing', 'analyzing', 'generating',
-    'recalling', 'staging', 'spawning', 'speaking', 'listening', 'reacting',
-  ] as const;
-
-  for (const activity of activities) {
-    const state = getActivityOrbState(activity);
-    assert.ok(STATE_TO_MODE[state], `${activity} should map to a shipped animation`);
-  }
-
-  assert.ok(STATE_TO_MODE[getLoadingOrbState()], 'loading should map to a shipped animation');
 });

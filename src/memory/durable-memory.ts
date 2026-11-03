@@ -50,8 +50,10 @@ export interface DurableMemoryStats {
 }
 
 const GRAPH_FILE = 'symbiote_live.json';
+const RUNTIME_GRAPH_FILE = 'symbiote_runtime.json';
 const OWNER = 'symbiote';
 const SCOPE = 'agent:symbiote';
+const RUNTIME_SCOPE = 'system:symbiote-runtime';
 
 function hashShard(shard: Omit<MemoGraphShard, 'shard_hash' | 'timestamp'>): string {
   const payload = {
@@ -144,9 +146,16 @@ function latestShard(snapshot: MemoGraphSnapshot): MemoGraphShard | undefined {
     .sort((left, right) => right.timestamp - left.timestamp)[0];
 }
 
+function latestRuntimeShard(snapshot: MemoGraphSnapshot): MemoGraphShard | undefined {
+  return Object.values(snapshot.nodes)
+    .filter(shard => shard?.domain === 'live' && shard.scope === RUNTIME_SCOPE)
+    .sort((left, right) => right.timestamp - left.timestamp)[0];
+}
+
 export class DurableMemory {
   private readonly archivePath: string;
   private readonly graphPath: string;
+  private readonly runtimeGraphPath: string;
   private records: Map<string, DurableMemoryRecord> | null = null;
 
   constructor(
@@ -156,6 +165,50 @@ export class DurableMemory {
   ) {
     this.archivePath = path.resolve(archivePath);
     this.graphPath = path.join(path.resolve(memographStorageDir), GRAPH_FILE);
+    this.runtimeGraphPath = path.join(path.resolve(memographStorageDir), RUNTIME_GRAPH_FILE);
+  }
+
+  syncRuntimeShard(content: Record<string, unknown>): { shardHash: string; changed: boolean; indexed: boolean } {
+    if (!content || typeof content !== 'object' || Array.isArray(content)) {
+      throw new Error('Symbiote runtime shard content must be an object.');
+    }
+    if (JSON.stringify(content).length > 2_000_000) {
+      throw new Error('Symbiote runtime shard content exceeds the 2 MB limit.');
+    }
+    const snapshot = readSnapshot(this.runtimeGraphPath);
+    const parent = latestRuntimeShard(snapshot);
+    if (parent && canonicalJson(parent.content) === canonicalJson(content)) {
+      const indexed = this.indexRuntimeShard(parent);
+      return { shardHash: parent.shard_hash, changed: false, indexed };
+    }
+
+    const shardFields = {
+      content,
+      owner: OWNER,
+      scope: RUNTIME_SCOPE,
+      domain: 'live',
+      parent_hash: parent?.shard_hash ?? null,
+      permissions: ['*'],
+      version: (parent?.version ?? 0) + 1,
+      content_type: 'CONVERSATIONAL',
+    };
+    const shard: MemoGraphShard = {
+      ...shardFields,
+      shard_hash: hashShard(shardFields),
+      timestamp: Date.now() / 1_000,
+    };
+    snapshot.nodes[shard.shard_hash] = shard;
+    if (shard.parent_hash && snapshot.nodes[shard.parent_hash]) {
+      const children = snapshot.edges[shard.parent_hash] ?? [];
+      if (!children.includes(shard.shard_hash)) children.push(shard.shard_hash);
+      snapshot.edges[shard.parent_hash] = children;
+      const parents = snapshot.reverse_edges[shard.shard_hash] ?? [];
+      if (!parents.includes(shard.parent_hash)) parents.push(shard.parent_hash);
+      snapshot.reverse_edges[shard.shard_hash] = parents;
+    }
+    writeSnapshot(this.runtimeGraphPath, snapshot);
+    const indexed = this.indexRuntimeShard(shard);
+    return { shardHash: shard.shard_hash, changed: true, indexed };
   }
 
   offload(summary: string, sessionId = 'main', source = 'agent'): MemoryOffloadResult {
@@ -270,6 +323,40 @@ export class DurableMemory {
   private getRecords(): Map<string, DurableMemoryRecord> {
     if (!this.records) this.records = readRecords(this.archivePath);
     return this.records;
+  }
+
+  private indexRuntimeShard(shard: MemoGraphShard): boolean {
+    const graphId = RUNTIME_GRAPH_FILE.replace(/\.json$/i, '');
+    const id = `memograph:${graphId}:${shard.shard_hash}`;
+    if (this.database.getDocument(id)) return false;
+    const body = [
+      `Domain: ${shard.domain}`,
+      `Scope: ${shard.scope}`,
+      JSON.stringify(shard.content, null, 2),
+    ].join('\n');
+    return this.database.index({
+      id,
+      text: body,
+      source: 'memograph',
+      role: 'memory',
+      timestamp: (shard.timestamp ?? Date.now() / 1_000) * 1_000,
+      namespace: `memograph:${graphId}:${shard.domain}:${shard.scope}`,
+      sessionId: 'symbiote-runtime',
+      metadata: {
+        memographGraph: graphId,
+        memographShard: JSON.stringify(shard),
+        memoryShardHash: shard.shard_hash,
+        memoryDomain: shard.domain,
+        memoryScope: shard.scope,
+        memoryOwner: shard.owner,
+        memoryPermissions: JSON.stringify(shard.permissions),
+        memoryParentHash: shard.parent_hash ?? '',
+        memoryRelations: JSON.stringify(shard.parent_hash ? [`memograph:${graphId}:${shard.parent_hash}`] : []),
+        memoryVersion: String(shard.version),
+        memoryContentType: shard.content_type,
+        memoryVerified: String(hashShard(shard) === shard.shard_hash),
+      },
+    });
   }
 }
 

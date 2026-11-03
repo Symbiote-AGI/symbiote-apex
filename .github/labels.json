@@ -1,0 +1,52 @@
+[
+  {
+    "name": "bug",
+    "color": "d73a4a",
+    "description": "A reproducible defect."
+  },
+  {
+    "name": "enhancement",
+    "color": "a2eeef",
+    "description": "An improvement or new capability."
+  },
+  {
+    "name": "documentation",
+    "color": "0075ca",
+    "description": "Documentation changes."
+  },
+  {
+    "name": "question",
+    "color": "d876e3",
+    "description": "A request for information or clarification."
+  },
+  {
+    "name": "security",
+    "color": "b60205",
+    "description": "Security hardening or vulnerability remediation."
+  },
+  {
+    "name": "dependencies",
+    "color": "0366d6",
+    "description": "Dependency upgrades and dependency automation."
+  },
+  {
+    "name": "production",
+    "color": "6f42c1",
+    "description": "Release, reliability, deployment, or operations work."
+  },
+  {
+    "name": "ui",
+    "color": "bfdadc",
+    "description": "Web, desktop, or CLI user interface work."
+  },
+  {
+    "name": "needs-triage",
+    "color": "fbca04",
+    "description": "Needs maintainer review and prioritization."
+  },
+  {
+    "name": "good first issue",
+    "color": "7057ff",
+    "description": "A focused issue suitable for a first contribution."
+  }
+]

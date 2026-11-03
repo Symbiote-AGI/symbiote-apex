@@ -56,6 +56,63 @@ test('thread scopes restrict agent reads and mentions grant explicit access', ()
   }
 });
 
+test('spaces persist starter topics, assign reviewers, and schedule bounded review after participant posts', async () => {
+  const workspace = temporaryWorkspace();
+  const manager = new ThreadManager(workspace, id => ['agent-a', 'agent-b'].includes(id));
+  try {
+    const thread = manager.createThread({
+      title: 'Release planning',
+      topicTitle: 'Rollout risks',
+      scope: 'selected',
+      participants: ['agent-b'],
+      reviewerAgentId: 'agent-a',
+    }, { type: 'agent', id: 'agent-a' });
+    const topic = thread.topics?.[0];
+    assert.ok(topic);
+    assert.equal(topic.title, 'Rollout risks');
+    assert.equal(topic.reviewerAgentId, 'agent-a');
+
+    const start = Date.now();
+    const updated = manager.postMessage(thread.id, { type: 'user', id: 'user' }, 'Check the rollback plan.', [], 'message', topic.id);
+    assert.equal(updated.posts[0].topicId, topic.id);
+    const scheduledAt = updated.topics?.[0]?.reviewScheduledAt;
+    assert.ok(scheduledAt);
+    assert.ok(scheduledAt >= start + 60_000 && scheduledAt <= Date.now() + 90_000);
+
+    const file = path.join(workspace, '.threads', 'threads.json');
+    const persisted = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+      threads: Array<{ id: string; topics: Array<{ id: string; lastReviewedAt: number; reviewScheduledAt?: number }> }>;
+    };
+    const savedThread = persisted.threads.find(item => item.id === thread.id)!;
+    const savedTopic = savedThread.topics.find(item => item.id === topic.id)!;
+    savedTopic.lastReviewedAt = 0;
+    savedTopic.reviewScheduledAt = Date.now() - 1;
+    fs.writeFileSync(file, JSON.stringify(persisted));
+
+    let reviewed = false;
+    manager.startSpaceReviews(async (space, reviewedTopic, newPosts) => {
+      assert.equal(space.id, thread.id);
+      assert.equal(reviewedTopic.id, topic.id);
+      assert.equal(newPosts[0].body, 'Check the rollback plan.');
+      reviewed = true;
+    });
+    const deadline = Date.now() + 2_000;
+    while (!reviewed && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(reviewed, true);
+    let after = manager.getThread(thread.id, { type: 'user', id: 'user' })?.topics?.[0];
+    while ((!after || after.lastReviewedAt < updated.posts[0].createdAt) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      after = manager.getThread(thread.id, { type: 'user', id: 'user' })?.topics?.[0];
+    }
+    assert.ok(after);
+    assert.ok(after.lastReviewedAt >= updated.posts[0].createdAt);
+    assert.equal(after?.reviewScheduledAt, undefined);
+  } finally {
+    manager.stopSpaceReviews();
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('user-help posts notify only as unread requests and support scoped reads and reactions', () => {
   const workspace = temporaryWorkspace();
   const projectByAgent = new Map([['agent-a', 'project-a'], ['agent-b', 'project-a'], ['agent-c', 'project-b']]);

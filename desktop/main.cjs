@@ -25,9 +25,10 @@ const gatewayProcessPath = process.env.SYMBIOTE_GATEWAY_PROCESS_PATH
   : path.join(app.getPath('userData'), 'gateway-process.json');
 const gatewaySupervisorLogPath = path.join(app.getPath('userData'), 'logs', 'gateway-supervisor.log');
 const gatewayRequestTimeoutMs = 10_000;
-const gatewayStartupTimeoutMs = 5 * 60_000;
+const gatewayStartupTimeoutMs = 30_000;
 const gatewayHealthFailureThreshold = 5;
 let gatewayStartup;
+let activeGatewayConfig;
 let gatewayChild;
 let gatewayRestartTimer;
 let gatewayRestartAttempts = 0;
@@ -38,6 +39,7 @@ let gatewayRestarting = false;
 let electronQuitting = false;
 let gatewayStopping = false;
 let serviceManagedGateway = false;
+let launcherManagedGateway = false;
 let desktopControlServer;
 let desktopControlPath;
 let desktopControlToken;
@@ -105,7 +107,37 @@ function installedDataDirectory() {
   }
 }
 
-function readGatewayConfig() {
+async function readTailscaleStatus() {
+  const executables = process.platform === 'win32'
+    ? [
+      'tailscale.exe',
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe'),
+      path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Tailscale', 'tailscale.exe'),
+    ]
+    : ['tailscale'];
+  let lastError;
+  for (const executable of executables) {
+    try {
+      const { stdout } = await execFileAsync(executable, ['status', '--json'], {
+        encoding: 'utf8',
+        timeout: 5_000,
+        windowsHide: true,
+        maxBuffer: 128 * 1024,
+      });
+      const status = JSON.parse(stdout);
+      if (!status || typeof status !== 'object' || Array.isArray(status)) {
+        throw new Error('Tailscale returned invalid status JSON.');
+      }
+      return { status };
+    } catch (error) {
+      lastError = error;
+      if (error.code !== 'ENOENT') break;
+    }
+  }
+  return { error: `Tailscale status could not be read: ${lastError?.message || 'Tailscale CLI was not found.'}` };
+}
+
+function readGatewayConfig(tailscaleResolution) {
   const dataDirectory = installedDataDirectory();
   const candidates = [
     process.env.SYMBIOTE_CONFIG,
@@ -144,37 +176,9 @@ function readGatewayConfig() {
     }
     let bindHost = configuredHost;
     let tailscaleError;
-    if (tailscaleEnabled) {
-      let tailscaleStatus;
-      const executables = process.platform === 'win32'
-        ? [
-          'tailscale.exe',
-          path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe'),
-          path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Tailscale', 'tailscale.exe'),
-        ]
-        : ['tailscale'];
-      let lastError;
-      for (const executable of executables) {
-        try {
-          const output = execFileSync(executable, ['status', '--json'], {
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'pipe'],
-            timeout: 5_000,
-            windowsHide: true,
-            maxBuffer: 128 * 1024,
-          });
-          const parsed = JSON.parse(output);
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error('Tailscale returned invalid status JSON.');
-          }
-          tailscaleStatus = parsed;
-          break;
-        } catch (error) {
-          lastError = error;
-          if (error.code !== 'ENOENT') break;
-        }
-      }
-      if (!tailscaleStatus) tailscaleError = `Tailscale status could not be read: ${lastError?.message || 'Tailscale CLI was not found.'}`;
+    if (tailscaleEnabled && tailscaleResolution) {
+      const tailscaleStatus = tailscaleResolution.status;
+      tailscaleError = tailscaleResolution.error;
       const addresses = Array.isArray(tailscaleStatus?.Self?.TailscaleIPs) ? tailscaleStatus.Self.TailscaleIPs : [];
       const ip = addresses.find(value => {
         if (typeof value !== 'string') return false;
@@ -187,8 +191,9 @@ function readGatewayConfig() {
       }
       bindHost = tailscaleError ? '127.0.0.1' : ip;
     }
-    const host = bindHost === '0.0.0.0' || bindHost === '::' ? '127.0.0.1' : bindHost;
-    const formattedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+    const tailscaleResolved = tailscaleEnabled && Boolean(tailscaleResolution);
+    const formatHost = host => host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+    const host = tailscaleEnabled || bindHost === '0.0.0.0' || bindHost === '::' ? '127.0.0.1' : bindHost;
     return {
       configPath,
       configDirectory: path.dirname(configPath),
@@ -198,10 +203,17 @@ function readGatewayConfig() {
       tailscaleEnabled,
       ...(tailscaleError ? { tailscaleError } : {}),
       port,
-      url: `http://${formattedHost}:${port}`,
+      url: `http://${formatHost(host)}:${port}`,
+      ...(tailscaleResolved && !tailscaleError ? { tailscaleUrl: `http://${formatHost(bindHost)}:${port}` } : {}),
     };
   }
   throw new Error(`Could not find symbiote.json. Checked: ${candidates.map(file => path.resolve(file)).join(', ')}`);
+}
+
+async function resolveGatewayConfig() {
+  const gateway = readGatewayConfig();
+  if (!gateway.tailscaleEnabled) return gateway;
+  return readGatewayConfig(await readTailscaleStatus());
 }
 
 function startDesktopControl(gateway) {
@@ -222,7 +234,7 @@ function startDesktopControl(gateway) {
       response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
         pid: process.pid,
         gatewayPid: gatewayChild?.pid ?? null,
-        gatewayMode: serviceManagedGateway ? 'service' : 'electron',
+        gatewayMode: serviceManagedGateway ? 'service' : launcherManagedGateway ? 'launcher' : 'electron',
       }));
       return;
     }
@@ -269,7 +281,10 @@ function gatewayHealthCheck(gateway, onFailure) {
       if (!healthy) onFailure?.(`${reason}; elapsedMs=${Date.now() - startedAt}`);
       resolve(healthy);
     };
-    const request = http.get(`${gateway.url}/api/status`, { timeout: gatewayRequestTimeoutMs }, response => {
+    const request = http.get(`${gateway.url}/api/status`, {
+      ...gatewayRequestOptions(gateway),
+      timeout: gatewayRequestTimeoutMs,
+    }, response => {
       response.resume();
       finish(response.statusCode === 200, `HTTP ${response.statusCode ?? 'unknown'}`);
     });
@@ -283,7 +298,10 @@ function gatewayHealthCheck(gateway, onFailure) {
 
 function readGatewayJson(gateway, pathname) {
   return new Promise(resolve => {
-    const request = http.get(`${gateway.url}${pathname}`, { timeout: gatewayRequestTimeoutMs }, response => {
+    const request = http.get(`${gateway.url}${pathname}`, {
+      ...gatewayRequestOptions(gateway),
+      timeout: gatewayRequestTimeoutMs,
+    }, response => {
       let body = '';
       response.setEncoding('utf8');
       response.on('data', chunk => { body += chunk; });
@@ -302,6 +320,28 @@ function readGatewayJson(gateway, pathname) {
     });
     request.once('error', () => resolve(undefined));
   });
+}
+
+function gatewayRequestOptions(gateway) {
+  let token = process.env.SYMBIOTE_WEB_TOKEN?.trim() ?? '';
+  if (!token) {
+    try {
+      const dotenv = require('dotenv');
+      token = dotenv.parse(fs.readFileSync(path.join(gateway.configDirectory, '.env'), 'utf8')).SYMBIOTE_WEB_TOKEN?.trim() ?? '';
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw new Error(`Could not read the Gateway environment file: ${error.message}`);
+    }
+  }
+  if (token) return { headers: { Authorization: `Bearer ${token}` } };
+
+  const tokenPath = path.join(gateway.workspace, '.session', 'web-access-token');
+  try {
+    token = fs.readFileSync(tokenPath, 'utf8').trim();
+    return token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw new Error(`Could not read the Gateway access token at ${tokenPath}: ${error.message}`);
+    return {};
+  }
 }
 
 function gatewayPortInUse(gateway) {
@@ -565,7 +605,8 @@ async function ensureGateway() {
   gatewayRestartTimer = undefined;
   gatewayStartup = (async () => {
     if (electronQuitting) throw new Error('Electron is closing and will not start another Gateway process.');
-    const gateway = readGatewayConfig();
+    const gateway = await resolveGatewayConfig();
+    activeGatewayConfig = gateway;
     if (gateway.tailscaleError) {
       console.error(`[desktop] Tailscale-only access is enabled but unavailable: ${gateway.tailscaleError} The Gateway will remain loopback-only; LAN access is disabled.`);
     }
@@ -584,9 +625,28 @@ async function ensureGateway() {
       } else if (installedServiceState !== 'RUNNING' && installedServiceState !== 'START_PENDING') {
         throw new Error(`The installed SymbioteGateway service is in state ${installedServiceState}; refusing to launch a second Gateway.`);
       }
-      if (!await waitForGateway(gateway, 60_000)) {
+      if (!await waitForGateway(gateway, gatewayStartupTimeoutMs)) {
         throw new Error(`The installed SymbioteGateway service did not become healthy at ${gateway.url}/api/status. Review its Windows service logs.`);
       }
+      return gateway;
+    }
+
+    let launcherRecord;
+    try {
+      launcherRecord = JSON.parse(fs.readFileSync(gatewayProcessPath, 'utf8'));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw new Error(`Could not read the Gateway process record: ${error.message}`);
+    }
+    if (launcherRecord?.owner === 'launcher'
+      && Number.isInteger(launcherRecord.pid)
+      && launcherRecord.pid > 0
+      && typeof launcherRecord.daemonPath === 'string'
+      && typeof launcherRecord.configPath === 'string'
+      && path.resolve(launcherRecord.daemonPath) === path.resolve(gateway.daemonPath)
+      && path.resolve(launcherRecord.configPath) === path.resolve(gateway.configPath)
+      && managedGatewayProcess(launcherRecord.pid, gateway)
+      && await gatewayPortInUse(gateway)) {
+      launcherManagedGateway = true;
       return gateway;
     }
 
@@ -598,6 +658,21 @@ async function ensureGateway() {
         && path.resolve(liveConfig.workspace) === gateway.workspace;
       if (!sameWorkspace || !managedGatewayProcess(liveStatus.pid, gateway)) {
         throw new Error(`Port ${gateway.port} is serving a Gateway Electron cannot safely identify. It was left untouched.`);
+      }
+      let processRecord;
+      try {
+        processRecord = JSON.parse(fs.readFileSync(gatewayProcessPath, 'utf8'));
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw new Error(`Could not read the Gateway process record: ${error.message}`);
+      }
+      if (processRecord?.owner === 'launcher'
+        && processRecord.pid === liveStatus.pid
+        && typeof processRecord.daemonPath === 'string'
+        && typeof processRecord.configPath === 'string'
+        && path.resolve(processRecord.daemonPath) === path.resolve(gateway.daemonPath)
+        && path.resolve(processRecord.configPath) === path.resolve(gateway.configPath)) {
+        launcherManagedGateway = true;
+        return gateway;
       }
       await stopGatewayProcess(liveStatus.pid, gateway);
       const stopDeadline = Date.now() + 10_000;
@@ -614,6 +689,7 @@ async function ensureGateway() {
       throw new Error(`Port ${gateway.port} is occupied by a process that is not a healthy Gateway managed by Electron. It was left untouched to avoid terminating an unrelated process.`);
     }
     const child = launchGateway(gateway);
+    launcherManagedGateway = false;
     if (!await waitForGateway(gateway)) {
       logGatewaySupervisor(`Gateway child pid=${child.pid ?? 'unknown'} did not become healthy within ${gatewayStartupTimeoutMs}ms; terminating the unready startup.`);
       if (child.pid && child.exitCode === null) child.kill();
@@ -691,6 +767,13 @@ async function restartManagedGateway() {
       await ensureGateway();
       return;
     }
+    if (launcherManagedGateway) {
+      const gateway = activeGatewayConfig ?? await resolveGatewayConfig();
+      const liveStatus = await readGatewayJson(gateway, '/api/status');
+      if (Number.isInteger(liveStatus?.pid)) await stopGatewayProcess(liveStatus.pid, gateway);
+      fs.rmSync(gatewayProcessPath, { force: true });
+      launcherManagedGateway = false;
+    }
     if (gatewayChild && gatewayChild.exitCode === null) await stopManagedGateway();
     gatewayRestartAttempts = 0;
     await ensureGateway();
@@ -705,7 +788,8 @@ function startGatewayMonitor() {
     if (electronQuitting || gatewayStartup || gatewayRestarting || gatewayStopping || gatewayMonitorRunning) return;
     gatewayMonitorRunning = true;
     try {
-      const gateway = readGatewayConfig();
+      const gateway = await resolveGatewayConfig();
+      activeGatewayConfig = gateway;
       let failureDetails = 'no HTTP 200 response';
       if (await gatewayHealthCheck(gateway, details => {
         failureDetails = details;
@@ -829,14 +913,12 @@ async function configureLanAccess(forcePrompt = false) {
 
 function getGatewayUrl() {
   if (isDesktopDev) return isDesktopDev.replace(/\/$/, '');
-  return readGatewayConfig().url;
+  return (activeGatewayConfig ?? readGatewayConfig()).url;
 }
 
 function getLanUrl() {
-  const gateway = readGatewayConfig();
-  if (gateway.tailscaleEnabled && !gateway.tailscaleError) {
-    return gateway.url;
-  }
+  const gateway = activeGatewayConfig ?? readGatewayConfig();
+  if (gateway.tailscaleEnabled) return gateway.tailscaleUrl ?? gateway.url;
   const addresses = Object.values(os.networkInterfaces()).flat().filter(address =>
     address?.family === 'IPv4' && !address.internal && address.address !== '127.0.0.1'
   );
@@ -906,7 +988,7 @@ function loadGatewayWithRetry(target, minimal) {
   load();
 }
 
-function createMainWindow() {
+function createMainWindow(showStartupSplash = false) {
   if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
   const iconPath = path.join(__dirname, process.platform === 'win32' ? 'app-icon.ico' : 'tray-icon.png');
   const icon = nativeImage.createFromPath(iconPath);
@@ -929,7 +1011,9 @@ function createMainWindow() {
   if (process.platform === 'win32') mainWindow.setIcon(icon);
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    if (process.platform === 'win32' && !readGatewayConfig().tailscaleEnabled) void configureLanAccess();
+    if (process.platform === 'win32' && !readGatewayConfig().tailscaleEnabled) {
+      setImmediate(() => void configureLanAccess());
+    }
   });
   mainWindow.on('close', event => {
     if (electronQuitting) return;
@@ -1031,7 +1115,14 @@ function createMainWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
-  loadGatewayWithRetry(mainWindow, false);
+  if (showStartupSplash) {
+    const splashPath = path.join(__dirname, '..', 'dist', 'webapp', 'dist', 'startup-splash', 'startup.html');
+    void mainWindow.loadFile(splashPath).catch(error => {
+      console.error('Could not display the Symbiote startup screen:', error);
+    });
+  } else {
+    loadGatewayWithRetry(mainWindow, false);
+  }
 }
 
 function showMainWindow() {
@@ -1230,7 +1321,7 @@ ipcMain.handle('desktop:set-theme', (_event, theme) => {
 ipcMain.handle('desktop:request-lan-access', () => configureLanAccess(true));
 ipcMain.handle('desktop:get-lan-url', () => getLanUrl());
 ipcMain.handle('desktop:restart-app', async () => {
-  if (serviceManagedGateway) await restartManagedGateway();
+  if (serviceManagedGateway || launcherManagedGateway) await restartManagedGateway();
   restartDesktop();
   return { accepted: true };
 });
@@ -1279,9 +1370,18 @@ app.whenReady().then(() => {
     app.quit();
     return;
   }
-  void startDesktopControl(readGatewayConfig()).then(() => ensureGateway()).then(() => {
+  try {
+    createMainWindow(true);
+  } catch (error) {
+    console.error('Could not create the Symbiote startup window:', error);
+    dialog.showErrorBox('Symbiote could not start', error.message);
+    app.quit();
+    return;
+  }
+  void startDesktopControl(readGatewayConfig()).then(() => ensureGateway()).then(gateway => {
+    activeGatewayConfig = gateway;
     startGatewayMonitor();
-    createMainWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) loadGatewayWithRetry(mainWindow, false);
   }).catch(error => {
     logGatewaySupervisor(`Electron startup failed; stopping the desktop supervisor: ${error.message}`);
     console.error('Electron cannot start without a healthy Symbiote Gateway:', error);

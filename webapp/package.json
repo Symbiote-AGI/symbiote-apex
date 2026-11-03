@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && vite build --config vite.startup.config.ts",
     "lint": "tsc --noEmit",
     "preview": "vite preview"
   },
@@ -13,10 +13,12 @@
     "@firebase/app": "^0.16.3",
     "@firebase/auth": "^1.13.7",
     "@monaco-editor/react": "^4.7.0",
-    "3d-force-graph": "^1.80.1",
     "chess.js": "^1.4.0",
+    "3d-force-graph": "^1.80.1",
     "d3-force-3d": "^3.0.6",
+    "lightweight-charts": "^5.2.1",
     "lucide-react": "^1.16.0",
+    "maplibre-gl": "^6.16.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.0.0",
@@ -31,5 +33,8 @@
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.3",
     "vite": "^6.2.0"
+  },
+  "overrides": {
+    "dompurify": "^3.4.17"
   }
 }

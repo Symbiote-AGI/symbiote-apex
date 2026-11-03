@@ -4,10 +4,12 @@
 
 **Persistent AI agent runtime for any type of workspace.**
 
-[![Version](https://img.shields.io/badge/version-5.6.2-blue?style=flat-square)](https://github.com/Artifact-Virtual/symbiote/releases)
+[![Version](https://img.shields.io/badge/version-5.7.0-blue?style=flat-square)](https://github.com/Artifact-Virtual/symbiote/releases)
 [![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-project-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![MIT License](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)](LICENSE) <br>
+[![CI](https://github.com/artifact-opensource/symbiote/actions/workflows/ci.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/artifact-opensource/symbiote/actions/workflows/codeql.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/codeql.yml)
 [![Build and release assets](https://github.com/artifact-opensource/symbiote/actions/workflows/release.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/release.yml)
 
 
@@ -28,6 +30,9 @@ Symbiote is more than a chat interface around an LLM. It is a local-first agent 
 | **A tool-using runtime** | Built-in file, filesystem, shell, process, browser, web, hardware, memory, messaging, and sub-agent tools let the agent inspect and act in its configured environment. Tool execution is sequential within an iteration, results are checked, and failures are returned to the agent to guide a different approach. |
 | **Adaptive and self-evaluating behavior** | SARSI, PARC, Curator, MEA, and Meta^n support routing, outcome assessment, and controlled evaluation of proposed improvements without inserting extra model calls into the tool-execution loop. |
 | **Channels and interfaces** | Run interactively in the CLI or keep the gateway online for Discord, WhatsApp, and the local HTTP/web interface. Channel-specific formatting, queued input, steering, and interrupt handling keep the interaction usable during long tasks. |
+| **Application connectors** | A common connector engine supports REST and MCP adapters, encrypted credentials, explicit per-agent capability grants, connection health, and bounded execution history. Built-in connectors cover GitHub, Notion, Slack, Figma, and Canva. |
+| **Markets workspace** | Public market feeds, persistent chart drawings and indicators, agent-accessible chart tools, a dedicated chat, and an optional MetaTrader 5 bridge. |
+| **Independent recovery surface** | The gateway also serves a standalone, dependency-free native UI at `/native` and supervises its HTTP server with bounded exponential restart retries. |
 | **Local-first and portable** | Sessions, configuration, and memory live on disk in your workspace. No Docker, Redis, or external vector database is required. Providers and channel services still need their own credentials and network access. |
 
 The runtime exposes the actual tools configured for each process. Access is governed by the configured trust and sandbox policy; admin access can reach the host machine, so only run it with credentials and permissions appropriate to your deployment. Browser CUA tools control only the Playwright viewport; the separate native `computer_use` runtime controls the host desktop and is restricted to admin sessions. Desktop screenshots are sent to the configured model for visual reasoning.
@@ -40,6 +45,32 @@ Symbiote runs an LLM agent in a persistent local process. It connects configured
 
 The runtime does not require Docker, Redis, or an external vector database. 
 Provider APIs and optional channel services require their own credentials and network access.
+
+## Screenshots
+
+<details>
+  <summary>Webapp — desktop and mobile</summary>
+  <p align="center">
+    <img src="docs/screenshots/webapp-desktop.png" alt="Symbiote Control Room on desktop" width="720">
+    <img src="docs/screenshots/webapp-mobile.png" alt="Symbiote Control Room on mobile" width="220">
+  </p>
+</details>
+
+<details>
+  <summary>Native recovery UI — desktop and mobile</summary>
+  <p align="center">
+    <img src="docs/screenshots/native-web-ui-desktop.png" alt="Symbiote native recovery UI on desktop" width="720">
+    <img src="docs/screenshots/native-web-ui-mobile.png" alt="Symbiote native recovery UI on mobile" width="220">
+  </p>
+</details>
+
+<details>
+  <summary>CLI — desktop and mobile-sized terminal</summary>
+  <p align="center">
+    <img src="docs/screenshots/cli-desktop.png" alt="Symbiote CLI on desktop" width="720">
+    <img src="docs/screenshots/cli-mobile.png" alt="Symbiote CLI in a mobile-sized terminal" width="220">
+  </p>
+</details>
 
 ## Quick Start
 
@@ -65,6 +96,8 @@ To start the persistent gateway instead:
 node dist/index.js start
 node dist/index.js status
 ```
+
+The gateway serves the full workspace at `http://127.0.0.1:3009/` and its standalone recovery UI at `http://127.0.0.1:3009/native`. The native page is an independent HTML/CSS/JavaScript document and remains available when the bundled webapp cannot load.
 
 The setup flow creates `symbiote.json` (with a JSON Schema for editor support) and `.env`. Keep API keys and channel tokens in `.env`; config files reference them as `${VAR}`. Upgrading from an older version? Run `node dist/index.js upgrade`.
 
@@ -93,7 +126,7 @@ A minimal `symbiote.json`:
 
 The default LLM request timeout is 15 minutes. `timeouts.llmRequestMs` and provider-specific `timeoutMs` values can override it. Provider retries preserve the configured timeout; authentication failures fail fast.
 
-The CLI and gateway currently register OpenRouter, Anthropic, OpenAI, Groq, Gemini, NVIDIA, xAI, GitHub Copilot, Ollama, and Gladius. Qwen, AI Horde, FreeAI, and OmniRoute provider modules exist but are not selectable through the default registries. A routed provider is used only when it is registered and configured; otherwise Symbiote uses the configured default provider.
+The CLI and gateway register OpenRouter, Anthropic, OpenAI, Groq, Gemini, NVIDIA, xAI, GitHub Copilot, Ollama, Gladius, and FreeAI. A routed provider is used only when it is registered and configured; otherwise Symbiote uses the configured default provider. Supported providers can expose models through automatic discovery.
 
 ## Memory
 
@@ -101,7 +134,7 @@ The CLI and gateway currently register OpenRouter, Anthropic, OpenAI, Groq, Gemi
 
 The native VDB is stored under `<workspace>/.vdb`. It persists JSONL documents and builds BM25 plus sparse TF-IDF indexes for hybrid lexical retrieval. Sessions are indexed incrementally; `memory_recall`, `memory_ingest`, and `memory_stats` are available in the gateway, CLI tool registry, and MCP server.
 
-This implementation does not generate dense neural embeddings. Its similarity ranking is based on lexical BM25/TF-IDF signals, recency, and optional Memograph metadata.
+The default VDB retrieval uses lexical BM25/TF-IDF signals, recency, and optional Memograph metadata. Optional neural memory adds local dense retrieval through Ollama embeddings and a persistent HNSW index, while preserving the original VDB records and lexical fallback. The example configuration uses `bge-m3`; `qwen3-embedding:8b` is also available as a larger model. See [Optional neural memory](docs/getting-started/configuration.md#optional-neural-memory).
 
 ### Operational continuity
 
@@ -150,11 +183,16 @@ REPL commands include `/help`, `/tools`, `/history`, `/model`, `/provider`, `/sp
 ## Development
 
 ```bash
+npm ci
+npm --prefix webapp ci
+npm run typecheck
 npm run build
-node --test dist/test/*.test.js
+npm test
+npm run check:release
 ```
 
 The project includes focused tests for provider routing, continuation behavior, VDB-backed Memograph import, tool execution and result handling, operational-memory expiry and retrieval, Discord progress formatting, and session persistence. Provider and channel integrations should also be exercised with their configured test credentials before deployment.
+Pull requests and branch pushes run [CI](.github/workflows/ci.yml) and [CodeQL](.github/workflows/codeql.yml). Dependabot proposes weekly dependency and workflow updates; repository issue labels are maintained in [`.github/labels.json`](.github/labels.json) and can be synchronized with the [label workflow](.github/workflows/sync-labels.yml).
 
 ## Contributing and community
 
@@ -162,7 +200,7 @@ Contributions are welcome. Please read the [contribution guidelines](.github/CON
 
 ## Documentation
 
-Additional guides live in [`docs/`](docs/README.md). Start with [Quick Start](docs/getting-started/quick-start.md), [Configuration](docs/getting-started/configuration.md), [Built-in Tools](docs/tools/built-in.md), and the [full changelog](CHANGELOG.md). Current release details are in [Release Notes](RELEASE_NOTES_v5.3.0.md).
+Additional guides live in [`docs/`](docs/README.md). Start with [Quick Start](docs/getting-started/quick-start.md), [Configuration](docs/getting-started/configuration.md), [Built-in Tools](docs/tools/built-in.md), and the [full changelog](CHANGELOG.md). Current release details are in [Release Notes](docs/releases/RELEASE_NOTES_v5.7.0.md).
 
 ## License
 

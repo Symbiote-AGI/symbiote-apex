@@ -25,6 +25,7 @@
 import type { Message } from '../providers/types.js';
 import { getOpsMemory } from '../memory/ops-memory.js';
 import type { VectorDB, VDBDocument, SearchResult } from '../memory/vdb.js';
+import type { NeuralMemoryEngine } from '../memory/neural-memory.js';
 
 // ── Config ───────────────────────────────────────────────────────────────
 
@@ -69,7 +70,7 @@ export class ContextStore {
   private config: ContextStoreConfig;
   private absorbedIds: Set<string> = new Set(); // prevent re-absorbing same messages
 
-  constructor(vdb: VectorDB, config?: Partial<ContextStoreConfig>) {
+  constructor(vdb: VectorDB, config?: Partial<ContextStoreConfig>, private readonly neuralMemory?: NeuralMemoryEngine) {
     this.vdb = vdb;
     this.config = { ...DEFAULT_CONTEXT_STORE_CONFIG, ...config };
   }
@@ -82,6 +83,47 @@ export class ContextStore {
    * @returns A retrieval message to inject, or null if nothing relevant found
    */
   retrieve(messages: Message[]): Message | null {
+    const request = this.prepareRetrievalRequest(messages);
+    if (!request) return null;
+    if (request.query.length < 20) return this.opsMessage(request.opsContext);
+
+    let results: SearchResult[];
+    try {
+      results = this.vdb.search(request.query, this.config.retrievalK * 3);
+    } catch (error) {
+      console.error(`[context-store] VDB search failed: ${error instanceof Error ? error.message : String(error)}`);
+      return this.opsMessage(request.opsContext);
+    }
+    return this.formatRetrieval(request, results);
+  }
+
+  async retrieveAsync(messages: Message[]): Promise<Message | null> {
+    const request = this.prepareRetrievalRequest(messages);
+    if (!request) return null;
+    if (request.query.length < 20) return this.opsMessage(request.opsContext);
+
+    let results: SearchResult[];
+    try {
+      results = this.neuralMemory
+        ? await this.neuralMemory.search(request.query, this.config.retrievalK * 3)
+        : this.vdb.search(request.query, this.config.retrievalK * 3);
+    } catch (error) {
+      console.error(`[context-store] Neural memory retrieval failed; trying lexical VDB: ${error instanceof Error ? error.message : String(error)}`);
+      try {
+        results = this.vdb.search(request.query, this.config.retrievalK * 3);
+      } catch (fallbackError) {
+        console.error(`[context-store] Lexical VDB fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+        return this.opsMessage(request.opsContext);
+      }
+    }
+    return this.formatRetrieval(request, results);
+  }
+
+  private prepareRetrievalRequest(messages: Message[]): {
+    query: string;
+    nonSystem: Message[];
+    opsContext: string | null;
+  } | null {
     // Build query from recent non-system messages
     const nonSystem = messages.filter(m => m.role !== 'system');
     const recent = nonSystem.slice(-this.config.queryDepth);
@@ -119,27 +161,27 @@ export class ContextStore {
         console.error(`[context-store] Ops Memory retrieval failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    if (query.length < 20) return opsContext ? { role: 'user', content: opsContext } : null;
+    return { query, nonSystem, opsContext };
+  }
 
-    // Search VDB and fail closed for malformed Memograph permissions.
-    let results: SearchResult[];
-    try {
-      results = this.vdb.search(query, this.config.retrievalK * 3);
-    } catch (error) {
-      console.error(`[context-store] VDB search failed: ${error instanceof Error ? error.message : String(error)}`);
-      return opsContext ? { role: 'user', content: opsContext } : null;
-    }
+  private opsMessage(opsContext: string | null): Message | null {
+    return opsContext ? { role: 'user', content: opsContext } : null;
+  }
 
+  private formatRetrieval(
+    request: { query: string; nonSystem: Message[]; opsContext: string | null },
+    results: SearchResult[],
+  ): Message | null {
     // Filter by threshold and dedup against current context
     const currentTexts = new Set(
-      nonSystem
+      request.nonSystem
         .map(m => typeof m.content === 'string' ? m.content.slice(0, 100) : '')
         .filter(t => t.length > 0)
     );
 
     const candidates = this.expandMemographNeighbors(results
       .filter(result => this.canRead(result))
-      .map(result => ({ ...result, score: this.contextScore(result, query) })));
+      .map(result => ({ ...result, score: this.contextScore(result, request.query) })));
     const relevant: SearchResult[] = [];
     let tokenBudget = this.config.retrievalBudget;
 
@@ -159,7 +201,7 @@ export class ContextStore {
       if (relevant.length >= this.config.retrievalK) break;
     }
 
-    if (relevant.length === 0) return opsContext ? { role: 'user', content: opsContext } : null;
+    if (relevant.length === 0) return this.opsMessage(request.opsContext);
 
     // Format as a retrieval block
     const parts: string[] = [
@@ -171,12 +213,18 @@ export class ContextStore {
       const domain = r.metadata?.memoryDomain?.toUpperCase();
       const scope = r.metadata?.memoryScope;
       const hash = r.metadata?.memoryShardHash;
+      const memoryType = r.metadata?.memoryType;
+      const sourceRef = r.metadata?.sourceRef;
       const source = domain
         ? `${domain}${scope ? ` · ${scope}` : ''}${hash ? ` · ${hash.slice(0, 10)}` : ''}`
         : r.source === 'absorbed' ? 'earlier this conversation' : r.source;
-      parts.push(`[${source}, ${age}, relevance=${(r.score * 100).toFixed(0)}%] ${r.text}`);
+      const provenance = [
+        memoryType ? `type=${memoryType}` : '',
+        sourceRef ? `ref=${sourceRef}` : '',
+      ].filter(Boolean).join(' · ');
+      parts.push(`[${source}${provenance ? ` · ${provenance}` : ''}, ${age}, relevance=${(r.score * 100).toFixed(0)}%] ${r.text}`);
     }
-    if (opsContext) parts.push(opsContext);
+    if (request.opsContext) parts.push(request.opsContext);
 
     return {
       role: 'user',
@@ -241,7 +289,38 @@ export class ContextStore {
    */
   absorb(dropped: Message[]): number {
     let absorbed = 0;
+    for (const document of this.prepareAbsorbedDocuments(dropped)) {
+      if (this.vdb.index(document)) absorbed++;
+    }
 
+    this.logAbsorbed(absorbed);
+    return absorbed;
+  }
+
+  async absorbAsync(dropped: Message[]): Promise<number> {
+    let absorbed = 0;
+    const indexedDocuments: VDBDocument[] = [];
+    for (const document of this.prepareAbsorbedDocuments(dropped)) {
+      const indexed = this.vdb.indexAndGet(document);
+      if (!indexed) continue;
+      absorbed++;
+      indexedDocuments.push(indexed);
+    }
+
+    if (this.neuralMemory && indexedDocuments.length > 0) {
+      try {
+        await this.neuralMemory.indexDocuments(indexedDocuments);
+      } catch (error) {
+        console.error(`[context-store] Dense memory indexing failed; lexical records remain persisted: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    this.logAbsorbed(absorbed);
+    return absorbed;
+  }
+
+  private prepareAbsorbedDocuments(dropped: Message[]): VDBDocument[] {
+    const documents: VDBDocument[] = [];
     for (const msg of dropped) {
       // Skip system messages (already permanent in prompt)
       if (msg.role === 'system') continue;
@@ -286,18 +365,21 @@ export class ContextStore {
         role: msg.role,
         timestamp: Date.now(),
         sessionId: this.config.sessionId,
+        metadata: {
+          memoryType: 'episodic',
+          sourceRef: `session:${this.config.sessionId}`,
+        },
       };
 
-      if (this.vdb.index(doc)) {
-        absorbed++;
-      }
+      documents.push(doc);
     }
+    return documents;
+  }
 
+  private logAbsorbed(absorbed: number): void {
     if (absorbed > 0) {
       console.log(`  [context-store] Absorbed ${absorbed} dropped messages into memory`);
     }
-
-    return absorbed;
   }
 
   /**
@@ -347,7 +429,11 @@ export class ContextStore {
           role: 'context',
           timestamp,
           namespace: 'boot:context',
-          metadata: { file: source },
+          metadata: {
+            file: source,
+            memoryType: date ? 'episodic' : 'semantic',
+            sourceRef: source,
+          },
           sessionId: 'boot',
         });
       }

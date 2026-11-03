@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import Editor from '@monaco-editor/react';
-import { Archive, ChevronDown, File, FilePlus2, Folder, FolderPlus, GitBranch, HardDrive, ListTodo, Pencil, Play, Plus, RefreshCw, Save, Terminal, Trash2, X } from 'lucide-react';
+import { Archive, ChevronDown, ChevronLeft, ChevronRight, File, FilePlus2, Folder, FolderPlus, GitBranch, HardDrive, ListTodo, Pencil, Play, Plus, RefreshCw, Save, Terminal, Trash2, X } from 'lucide-react';
 import type { AgentProfile, WorkspaceFile, WorkspaceProject } from '../types';
 import ActivityOrb from './ActivityOrb';
 
@@ -51,6 +51,7 @@ export default function ProjectIDE({ projects, profiles, onArchiveProject, onRun
   const [selectedPath, setSelectedPath] = useState('');
   const [selectedEntryPath, setSelectedEntryPath] = useState('');
   const [collapsedDirectories, setCollapsedDirectories] = useState<string[]>([]);
+  const [explorerCollapsed, setExplorerCollapsed] = useState(false);
   const [idePanel, setIdePanel] = useState<'files' | 'plan'>('files');
   const [projectTasks, setProjectTasks] = useState<ProjectPlanTask[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
@@ -569,25 +570,29 @@ export default function ProjectIDE({ projects, profiles, onArchiveProject, onRun
         </section>
       </div>}
 
-      <div className="project-ide-workbench">
-        <aside className="project-ide-explorer" aria-label="Project files">
+      <div className={`project-ide-workbench${explorerCollapsed ? ' project-ide-workbench-explorer-collapsed' : ''}`}>
+        <aside className={`project-ide-explorer${explorerCollapsed ? ' project-ide-explorer-collapsed' : ''}`} aria-label="Project files">
           <div className="project-ide-explorer-header">
-            <div className="project-ide-explorer-tabs">
-              <button type="button" className={idePanel === 'files' ? 'project-ide-explorer-tab project-ide-explorer-tab-active' : 'project-ide-explorer-tab'} onClick={() => setIdePanel('files')}><Folder size={13} />Files</button>
-              <button type="button" className={idePanel === 'plan' ? 'project-ide-explorer-tab project-ide-explorer-tab-active' : 'project-ide-explorer-tab'} onClick={() => setIdePanel('plan')}><ListTodo size={13} />Plan <span>{projectTasks.filter(task => task.status !== 'completed').length}</span></button>
-            </div>
-            <div>
-              {idePanel === 'files' ? <>
-                <button type="button" className="icon-button small" onClick={() => openEntryDialog('file')} disabled={saving} aria-label="Create project file" title="New file"><FilePlus2 size={15} /></button>
-                <button type="button" className="icon-button small" onClick={() => openEntryDialog('directory')} disabled={saving} aria-label="Create project folder" title="New folder"><FolderPlus size={15} /></button>
-                <button type="button" className="icon-button small" onClick={() => void refreshFiles(selectedProjectId)} disabled={loadingFiles} aria-label="Refresh project files" title="Refresh"><RefreshCw size={14} /></button>
-              </> : <button type="button" className="icon-button small" onClick={() => void refreshTasks(selectedProjectId)} aria-label="Refresh project plan" title="Refresh plan"><RefreshCw size={14} /></button>}
-            </div>
+            {explorerCollapsed
+              ? <button type="button" className="icon-button small" onClick={() => setExplorerCollapsed(false)} aria-label="Expand project explorer" title="Show project explorer"><ChevronRight size={15} /></button>
+              : <>
+                <div className="project-ide-explorer-tabs">
+                  <button type="button" className={idePanel === 'files' ? 'project-ide-explorer-tab project-ide-explorer-tab-active' : 'project-ide-explorer-tab'} onClick={() => setIdePanel('files')}><Folder size={13} />Files</button>
+                  <button type="button" className={idePanel === 'plan' ? 'project-ide-explorer-tab project-ide-explorer-tab-active' : 'project-ide-explorer-tab'} onClick={() => setIdePanel('plan')}><ListTodo size={13} />Plan <span>{projectTasks.filter(task => task.status !== 'completed').length}</span></button>
+                </div>
+                <div>
+                  {idePanel === 'files' ? <>
+                    <button type="button" className="icon-button small" onClick={() => openEntryDialog('file')} disabled={saving} aria-label="Create project file" title="New file"><FilePlus2 size={15} /></button>
+                    <button type="button" className="icon-button small" onClick={() => openEntryDialog('directory')} disabled={saving} aria-label="Create project folder" title="New folder"><FolderPlus size={15} /></button>
+                    <button type="button" className="icon-button small" onClick={() => void refreshFiles(selectedProjectId)} disabled={loadingFiles} aria-label="Refresh project files" title="Refresh"><RefreshCw size={14} /></button>
+                  </> : <button type="button" className="icon-button small" onClick={() => void refreshTasks(selectedProjectId)} aria-label="Refresh project plan" title="Refresh plan"><RefreshCw size={14} /></button>}
+                  <button type="button" className="icon-button small" onClick={() => setExplorerCollapsed(true)} aria-label="Collapse project explorer" title="Hide project explorer"><ChevronLeft size={15} /></button>
+                </div>
+              </>}
           </div>
-          {idePanel === 'files' ? <div className="project-ide-file-list">
+          {!explorerCollapsed && (idePanel === 'files' ? <div className="project-ide-file-list">
             {loadingFiles && <span className="project-ide-muted"><ActivityOrb label="Loading files" compact loading /> Loading files</span>}
             {!loadingFiles && visibleEntries.map(entry => {
-              const depth = entry.path.split('/').length - 1;
               const isDirectory = entry.type === 'directory';
               const active = selectedEntryPath === entry.path;
               return (
@@ -595,7 +600,6 @@ export default function ProjectIDE({ projects, profiles, onArchiveProject, onRun
                   type="button"
                   key={entry.path}
                   className={`project-ide-file${active ? ' project-ide-file-active' : ''}`}
-                  style={{ paddingLeft: 8 + depth * 12 }}
                   onClick={() => {
                     if (isDirectory) {
                       setSelectedEntryPath(entry.path);
@@ -626,7 +630,7 @@ export default function ProjectIDE({ projects, profiles, onArchiveProject, onRun
               </article>)}
               {!projectTasks.length && <p className="project-ide-muted">Project plans stay here and update live as agents work.</p>}
             </div>
-          </div>}
+          </div>)}
         </aside>
 
         <div className="project-ide-editor-pane">

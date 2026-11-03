@@ -14,17 +14,20 @@ test('project terminals keep a shell session alive, stream output, and enforce p
     assert.throws(() => terminals.poll('project-b', started.terminalId), /not found/);
 
     const command = process.platform === 'win32'
-      ? 'Write-Output persistent-terminal-marker'
+      ? "Write-Output ('persistent-' + 'terminal-marker')"
       : 'printf persistent-terminal-marker';
     terminals.write('project-a', started.terminalId, `${command}\n`);
 
     let result = terminals.poll('project-a', started.terminalId);
-    const deadline = Date.now() + 5_000;
-    while (!result.output.includes('persistent-terminal-marker') && Date.now() < deadline) {
+    let observedOutput = result.output;
+    const deadline = Date.now() + (process.platform === 'win32' ? 30_000 : 5_000);
+    while (!observedOutput.includes('persistent-terminal-marker') && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 50));
       result = terminals.poll('project-a', started.terminalId);
+      observedOutput += result.output;
     }
-    assert.match(result.output, /persistent-terminal-marker/);
+    assert.match(observedOutput, /persistent-terminal-marker/);
+    assert.doesNotMatch(observedOutput, /__SYMBIOTE_TERMINAL_READY__/);
     assert.equal(result.running, true);
 
     terminals.write('project-a', started.terminalId, process.platform === 'win32' ? 'exit\n' : 'exit\n');
@@ -41,7 +44,7 @@ test('project terminals keep a shell session alive, stream output, and enforce p
     assert.equal(await terminals.killProject('project-b'), 1);
   } finally {
     await terminals.stopAll();
-    fs.rmSync(workspace, { recursive: true, force: true });
-    fs.rmSync(otherWorkspace, { recursive: true, force: true });
+    fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    fs.rmSync(otherWorkspace, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

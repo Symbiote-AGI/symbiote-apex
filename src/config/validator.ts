@@ -148,6 +148,65 @@ export function validateConfig(config: SymbioteConfig): ValidationError[] {
     }
   }
 
+  const neuralMemory = config.memory?.neural;
+  if (neuralMemory) {
+    if (neuralMemory.enabled && !neuralMemory.model?.trim()) {
+      issues.push({
+        field: 'memory.neural.model',
+        message: 'An embedding model is required when neural memory is enabled.',
+        severity: 'error',
+        suggestion: 'Install an Ollama embedding model such as bge-m3 and set its configured model name.',
+      });
+    }
+    if (neuralMemory.provider && neuralMemory.provider !== 'ollama') {
+      issues.push({
+        field: 'memory.neural.provider',
+        message: `Unsupported neural memory provider: ${neuralMemory.provider}`,
+        severity: 'error',
+      });
+    }
+    if (neuralMemory.baseUrl) {
+      try {
+        const url = new URL(neuralMemory.baseUrl);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+          throw new Error('Use an HTTP(S) URL without credentials, query, or fragment.');
+        }
+      } catch (error) {
+        issues.push({
+          field: 'memory.neural.baseUrl',
+          message: `Invalid embedding service URL: ${error instanceof Error ? error.message : String(error)}`,
+          severity: 'error',
+        });
+      }
+    }
+    if (neuralMemory.timeoutMs !== undefined
+      && (!Number.isInteger(neuralMemory.timeoutMs) || neuralMemory.timeoutMs < 1_000 || neuralMemory.timeoutMs > 300_000)) {
+      issues.push({
+        field: 'memory.neural.timeoutMs',
+        message: 'Embedding timeout must be a whole number from 1000 to 300000 milliseconds.',
+        severity: 'error',
+      });
+    }
+    const lexicalWeight = neuralMemory.lexicalWeight ?? 0.4;
+    const denseWeight = neuralMemory.denseWeight ?? 0.6;
+    if (![lexicalWeight, denseWeight].every(weight => Number.isFinite(weight) && weight >= 0)
+      || lexicalWeight + denseWeight === 0) {
+      issues.push({
+        field: 'memory.neural',
+        message: 'Neural memory weights must be non-negative and not both zero.',
+        severity: 'error',
+      });
+    }
+    if (neuralMemory.temporalHalfLifeDays !== undefined
+      && (!Number.isFinite(neuralMemory.temporalHalfLifeDays) || neuralMemory.temporalHalfLifeDays <= 0)) {
+      issues.push({
+        field: 'memory.neural.temporalHalfLifeDays',
+        message: 'Temporal half-life must be a positive number of days.',
+        severity: 'error',
+      });
+    }
+  }
+
   if (config.timeouts) {
     for (const [key, val] of Object.entries(config.timeouts)) {
       if (typeof val === 'number' && val < 1000) {

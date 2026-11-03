@@ -33,7 +33,7 @@ function atomicRename(oldPath: string, newPath: string): void {
   }
 }
 
-function atomicWriteFile(destination: string, content: string, label: string): void {
+export function atomicWriteFile(destination: string, content: string, label: string, logScope = 'sessions'): void {
   const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
   try {
     fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -44,16 +44,36 @@ function atomicWriteFile(destination: string, content: string, label: string): v
       `Failed to persist ${label} at ${destination}: ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
-    console.error(`[sessions] ${persistenceError.message}`);
+    console.error(`[${logScope}] ${persistenceError.message}`);
     try {
       fs.unlinkSync(temporary);
     } catch (cleanupError) {
       if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error(`[sessions] Could not clean up temporary file ${temporary}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        console.error(`[${logScope}] Could not clean up temporary file ${temporary}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
       }
     }
     throw persistenceError;
   }
+}
+
+function unlinkAndVerify(filePath: string, label: string): boolean {
+  try {
+    fs.unlinkSync(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    const persistenceError = new SessionPersistenceError(
+      `Failed to remove ${label} at ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+    console.error(`[sessions] ${persistenceError.message}`);
+    throw persistenceError;
+  }
+  if (fs.existsSync(filePath)) {
+    const persistenceError = new SessionPersistenceError(`Failed to verify removal of ${label} at ${filePath}.`);
+    console.error(`[sessions] ${persistenceError.message}`);
+    throw persistenceError;
+  }
+  return true;
 }
 
 
@@ -350,7 +370,56 @@ export class SessionManager {
   }
 
   delete(id: string): boolean {
-    try { fs.unlinkSync(this.filePath(id)); return true; } catch { return false; }
+    if (!id.trim()) throw new TypeError('A session ID is required for deletion.');
+
+    const activeFile = this.filePath(id);
+    const archiveDirectory = path.join(path.dirname(activeFile), 'archive');
+    const routeFile = this.routesFilePath();
+    const routes = this.loadRoutes();
+    const remainingRoutes = routes.filter(route => route.sessionId !== id);
+    const routeChanged = remainingRoutes.length !== routes.length;
+    let removed = false;
+
+    removed = unlinkAndVerify(activeFile, `session ${id}`) || removed;
+
+    let archiveFiles: string[] = [];
+    try {
+      archiveFiles = fs.readdirSync(archiveDirectory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new SessionPersistenceError(
+          `Failed to inspect archived data for session ${id} at ${archiveDirectory}: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
+    }
+
+    const archiveIds = new Set([
+      path.basename(activeFile, '.json'),
+      id.replace(/[^a-zA-Z0-9_\-:.]/g, '_'),
+    ]);
+    for (const file of archiveFiles) {
+      if (!file.endsWith('.json')) continue;
+      const base = file.slice(0, -'.json'.length);
+      const isArchivedSession = [...archiveIds].some(archiveId => base === archiveId);
+      const isArchivedMessages = [...archiveIds].some(archiveId => {
+        const prefix = `${archiveId}-`;
+        return base.startsWith(prefix) && /^\d+$/.test(base.slice(prefix.length));
+      });
+      if (!isArchivedSession && !isArchivedMessages) continue;
+      removed = unlinkAndVerify(path.join(archiveDirectory, file), `archived session ${id}`) || removed;
+    }
+
+    if (routeChanged) {
+      atomicWriteFile(routeFile, JSON.stringify(remainingRoutes, null, 2), 'session routes');
+      const persistedRoutes = this.loadRoutes();
+      if (persistedRoutes.some(route => route.sessionId === id)) {
+        throw new SessionPersistenceError(`Failed to verify route cleanup for session ${id}.`);
+      }
+      removed = true;
+    }
+
+    return removed;
   }
 
   archiveSession(id: string): boolean {
@@ -461,28 +530,33 @@ export class SessionManager {
   cleanup(): number {
     const now = Date.now();
     let cleaned = 0;
-    try {
-      for (const directory of this.sessionDirectories()) {
-        let files: string[];
+    for (const directory of this.sessionDirectories()) {
+      let files: string[];
+      try {
+        files = fs.readdirSync(directory).filter(file => file.endsWith('.json'));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+      for (const file of files) {
+        const source = path.join(directory, file);
+        let serialized: string;
         try {
-          files = fs.readdirSync(directory).filter(file => file.endsWith('.json'));
+          serialized = fs.readFileSync(source, 'utf-8');
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-          throw error;
+          throw new Error(`Failed to inspect session file ${source}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
         }
-        for (const file of files) {
-          try {
-            const source = path.join(directory, file);
-            const s = JSON.parse(fs.readFileSync(source, 'utf-8')) as Session;
-            if (now - s.updatedAt > this.ttl) {
-              fs.unlinkSync(source);
-              cleaned++;
-            }
-          } catch { /* skip corrupt files */ }
+        let session: Session;
+        try {
+          session = JSON.parse(serialized) as Session;
+        } catch (error) {
+          console.warn(`[sessions] Skipping invalid session file ${source}: ${error instanceof Error ? error.message : String(error)}`);
+          continue;
         }
+        if (typeof session.id !== 'string' || typeof session.updatedAt !== 'number' || now - session.updatedAt <= this.ttl) continue;
+        if (this.delete(session.id)) cleaned++;
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     return cleaned;
   }

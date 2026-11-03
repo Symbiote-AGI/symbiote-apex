@@ -17,14 +17,17 @@ export function createThreadsTool(
 ): ToolDefinition {
   return {
     name: 'threads_manage',
-    description: 'Create and participate in access-controlled multi-agent discussion threads. Agents can only read threads they created, were invited/mentioned in, or that are explicitly open. External-contact threads are private to the user, Symbiote, and the invited contact. Use request_user_help only when blocked and no reasonable independent path remains; it creates a private scoped request and notifies the user. Ordinary posts do not notify the user or trigger another autonomous run.',
+    description: 'Create and participate in access-controlled collaboration spaces with named topics. Agents can only read spaces they created, were invited/mentioned in, or that are explicitly open. External-contact spaces are private to the user, Symbiote, and the invited contact. Topic discussions schedule a jittered review for their assigned agent when other participants add updates. Use request_user_help only when blocked and no reasonable independent path remains; it creates a private scoped request and notifies the user.',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'read', 'create', 'post', 'request_user_help', 'mark_read', 'react'], description: 'Thread operation.' },
+        action: { type: 'string', enum: ['list', 'read', 'create', 'create_topic', 'post', 'request_user_help', 'mark_read', 'react'], description: 'Space operation.' },
         threadId: { type: 'string', description: 'Thread ID for read or post.' },
+        topicId: { type: 'string', description: 'Topic ID for a topic-specific post.' },
         postId: { type: 'string', description: 'Post ID for a read receipt or reaction.' },
         title: { type: 'string', description: 'Short title for a new thread.' },
+        topicTitle: { type: 'string', description: 'Optional initial topic title when creating a space.' },
+        reviewerAgentId: { type: 'string', description: 'Agent ID responsible for reviewing topic updates; defaults to the creating agent.' },
         scope: { type: 'string', enum: ['project', 'selected', 'open'], description: 'Project restricts invitations to that project; selected allows explicit cross-project participants; open is readable by all agents.' },
         projectId: { type: 'string', description: 'Required when scope is project.' },
         participantAgentIds: { type: 'array', items: { type: 'string' }, description: 'Agent IDs to invite to a project- or selected-scope thread.' },
@@ -58,6 +61,7 @@ export function createThreadsTool(
             projectId: thread.projectId,
             participantCount: thread.participants.length,
             postCount: thread.posts.length,
+            topicCount: thread.topics?.length ?? 0,
             updatedAt: thread.updatedAt,
           })), null, 2);
         case 'read': {
@@ -78,8 +82,20 @@ export function createThreadsTool(
             scope: input.scope as ThreadScope,
             ...(typeof input.projectId === 'string' ? { projectId: input.projectId } : {}),
             participants: stringArray(input.participantAgentIds, 'participantAgentIds'),
+            ...(typeof input.topicTitle === 'string' ? { topicTitle: input.topicTitle } : {}),
+            ...(typeof input.reviewerAgentId === 'string' ? { reviewerAgentId: input.reviewerAgentId } : {}),
           }, actor);
           return JSON.stringify(thread, null, 2);
+        }
+        case 'create_topic': {
+          if (typeof input.threadId !== 'string' || !input.threadId.trim() || typeof input.title !== 'string') {
+            throw new Error('Creating a topic requires threadId and title.');
+          }
+          const thread = manager.createTopic(input.threadId.trim(), actor, {
+            title: input.title,
+            ...(typeof input.reviewerAgentId === 'string' ? { reviewerAgentId: input.reviewerAgentId } : {}),
+          });
+          return JSON.stringify(thread.topics?.at(-1), null, 2);
         }
         case 'post': {
           if (typeof input.threadId !== 'string' || !input.threadId.trim() || typeof input.body !== 'string') {
@@ -90,6 +106,8 @@ export function createThreadsTool(
             actor,
             input.body,
             stringArray(input.mentionAgentIds, 'mentionAgentIds'),
+            'message',
+            typeof input.topicId === 'string' ? input.topicId : undefined,
           );
           return JSON.stringify({ threadId: thread.id, postCount: thread.posts.length, updatedAt: thread.updatedAt });
         }

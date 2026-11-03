@@ -6,7 +6,7 @@ import { parse } from 'dotenv';
 import { appPath } from '../runtime/platform.js';
 
 export type IntegrationProvider = 'azure' | 'oci' | 'n8n' | 'kaggle';
-export type CredentialProvider = IntegrationProvider | 'discord';
+export type CredentialProvider = IntegrationProvider | 'discord' | 'mt5' | 'binance' | `connector:${string}`;
 export type IntegrationCredentials = Record<string, string>;
 
 interface EncryptedVault {

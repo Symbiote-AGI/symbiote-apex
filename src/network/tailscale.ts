@@ -26,7 +26,7 @@ interface TailscaleCliStatus {
   };
 }
 
-function isTailscaleIPv4(value: unknown): value is string {
+export function isTailscaleIPv4(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const octets = value.split('.');
   if (octets.length !== 4 || octets.some(octet => !/^\d{1,3}$/.test(octet))) return false;

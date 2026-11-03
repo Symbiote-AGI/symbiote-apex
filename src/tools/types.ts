@@ -37,6 +37,7 @@ export interface ToolParameter {
 export interface ToolDefinition {
   name: string;
   description: string;
+  connectorId?: string;
   parameters: {
     type: 'object';
     properties: Record<string, ToolParameter>;
@@ -60,6 +61,7 @@ export interface ToolExecutionOutput {
 
 export interface ToolExecuteOptions {
   sessionId?: string;
+  agentId?: string;
   sessionTier?: 'admin' | 'standard' | 'restricted';
   onProgress?: (chunk: string) => void;
   signal?: AbortSignal;

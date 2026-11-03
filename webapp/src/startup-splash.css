@@ -1,0 +1,73 @@
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  background: #080b12;
+  color: #e8edf7;
+  font: 14px system-ui, sans-serif;
+}
+
+.startup-card {
+  text-align: center;
+}
+
+.activity-orb {
+  display: inline-block;
+  vertical-align: middle;
+  filter: sepia(1) saturate(5) hue-rotate(calc(var(--appearance-primary-hue, 145deg) - 35deg)) drop-shadow(0 0 3px var(--appearance-primary, #7c9c64));
+}
+
+.startup-orb {
+  width: 112px;
+  height: 112px;
+  margin: 0 auto 28px;
+}
+
+.startup-mark {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.startup-status {
+  margin-top: 12px;
+  color: #b1c2d1;
+}
+
+.startup-elapsed {
+  margin-top: 8px;
+  color: #708296;
+  font-size: 12px;
+}
+
+.startup-pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 9px;
+  border-radius: 50%;
+  background: #20d6bd;
+  vertical-align: 2px;
+  box-shadow: 0 0 10px #20d6bd;
+  animation: startup-pulse 1.3s ease-in-out infinite;
+}
+
+@keyframes startup-pulse {
+  50% {
+    opacity: 0.42;
+    transform: scale(0.88);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .startup-pulse {
+    animation-duration: 8s;
+  }
+}

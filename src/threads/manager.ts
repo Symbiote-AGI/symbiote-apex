@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export type ThreadScope = 'project' | 'selected' | 'open' | 'external';
-export type ThreadActor = { type: 'user' | 'agent' | 'external'; id: string; projectId?: string; label?: string };
+export type ThreadActor = { type: 'user' | 'agent' | 'external'; id: string; projectId?: string; label?: string; sessionId?: string };
 export type ThreadPostKind = 'message' | 'user_help';
 
 export interface ThreadPost {
@@ -15,6 +15,18 @@ export interface ThreadPost {
   kind?: ThreadPostKind;
   readBy?: string[];
   reactions?: Array<{ emoji: string; actors: string[] }>;
+  topicId?: string;
+}
+
+export interface SpaceTopic {
+  id: string;
+  title: string;
+  createdByAgentId: string;
+  reviewerAgentId: string;
+  createdAt: number;
+  updatedAt: number;
+  lastReviewedAt: number;
+  reviewScheduledAt?: number;
 }
 
 export interface AgentThread {
@@ -29,6 +41,7 @@ export interface AgentThread {
   updatedAt: number;
   archivedAt?: number;
   posts: ThreadPost[];
+  topics?: SpaceTopic[];
 }
 
 export interface ThreadContact {
@@ -54,10 +67,17 @@ export interface ThreadNotification {
 
 export interface CreateThreadInput {
   title: string;
+  topicTitle?: string;
   scope: ThreadScope;
   projectId?: string;
   participants?: string[];
   externalContactIds?: string[];
+  reviewerAgentId?: string;
+}
+
+export interface CreateSpaceTopicInput {
+  title: string;
+  reviewerAgentId?: string;
 }
 
 export interface ThreadUserHelpRequest {
@@ -122,6 +142,8 @@ export class ThreadManager {
   private notificationHandler: ((notification: ThreadNotification) => Promise<void>) | null = null;
   private notificationTimer: NodeJS.Timeout | null = null;
   private processingNotification = false;
+  private spaceReviewTimer: NodeJS.Timeout | null = null;
+  private processingSpaceReview = false;
 
   constructor(
     workspaceRoot: string,
@@ -181,24 +203,52 @@ export class ThreadManager {
       throw new Error('Project-scoped threads can only invite agents assigned to that project.');
     }
     const timestamp = Date.now();
+    const topicTitle = input.topicTitle?.trim() ? safeLabel(input.topicTitle, 'Topic title', 120) : title;
+    const reviewerAgentId = input.reviewerAgentId?.trim() || (actor.type === 'agent' ? actor.id : 'main');
+    if (reviewerAgentId !== 'main' && !this.isKnownAgent(reviewerAgentId)) {
+      throw new Error(`Reviewer agent ${reviewerAgentId} is unavailable.`);
+    }
+    if (reviewerAgentId !== 'main' && !participants.includes(reviewerAgentId) && reviewerAgentId !== actor.id) {
+      throw new Error('The reviewer must be invited to the space.');
+    }
     const thread: AgentThread = {
       id: crypto.randomUUID(),
       title,
       scope,
       ...(projectId ? { projectId } : {}),
-      participants: [...new Set([...participants, ...(actor.type === 'agent' ? [actor.id] : [])])],
+      participants: [...new Set([
+        ...participants,
+        ...(actor.type === 'agent' ? [actor.id] : []),
+        ...(reviewerAgentId === 'main' ? ['main'] : []),
+      ])],
       externalContactIds,
       createdBy: this.publicActor(actor),
       createdAt: timestamp,
       updatedAt: timestamp,
       posts: [],
+      topics: scope === 'external' ? [] : [{
+        id: crypto.randomUUID(),
+        title: topicTitle,
+        createdByAgentId: actor.type === 'agent' ? actor.id : 'user',
+        reviewerAgentId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        lastReviewedAt: timestamp,
+      }],
     };
     data.threads.push(thread);
     this.write(data);
     return structuredClone(thread);
   }
 
-  postMessage(id: string, actor: ThreadActor, bodyValue: string, mentionedAgentIds: string[] = [], kind: ThreadPostKind = 'message'): AgentThread {
+  postMessage(
+    id: string,
+    actor: ThreadActor,
+    bodyValue: string,
+    mentionedAgentIds: string[] = [],
+    kind: ThreadPostKind = 'message',
+    topicId?: string,
+  ): AgentThread {
     const body = sanitizeThreadText(bodyValue);
     const data = readData(this.filePath);
     const thread = data.threads.find(item => item.id === id && !item.archivedAt);
@@ -207,6 +257,8 @@ export class ThreadManager {
       throw new Error('This contact is not permitted to post in the thread.');
     }
     const mentions = this.validateParticipants(mentionedAgentIds, actor.id);
+    const topic = topicId ? thread.topics?.find(item => item.id === topicId) : undefined;
+    if (topicId && !topic) throw new Error('Space topic was not found.');
     if (thread.scope === 'project' && mentions.some(agentId => !this.agentBelongsToProject(agentId, thread.projectId!))) {
       throw new Error('Project-scoped threads cannot mention agents from another project.');
     }
@@ -219,15 +271,128 @@ export class ThreadManager {
       kind,
       readBy: [this.readerKey(actor)],
       reactions: [],
+      ...(topic ? { topicId: topic.id } : {}),
     };
     thread.posts.push(post);
     thread.participants = [...new Set([...thread.participants, ...mentions])];
     thread.updatedAt = post.createdAt;
+    if (topic) {
+      topic.updatedAt = post.createdAt;
+      if (actor.type === 'user' || actor.id !== topic.reviewerAgentId) {
+        topic.reviewScheduledAt = post.createdAt + 60_000 + Math.floor(Math.random() * 30_001);
+      } else {
+        topic.lastReviewedAt = post.createdAt;
+        topic.reviewScheduledAt = undefined;
+      }
+    }
     if (actor.type === 'external') {
       this.enqueueNotification(data, thread, post, actor);
     }
     this.write(data);
     return structuredClone(thread);
+  }
+
+  createTopic(id: string, actor: ThreadActor, input: CreateSpaceTopicInput): AgentThread {
+    const title = safeLabel(input.title, 'Topic title', 120);
+    const data = readData(this.filePath);
+    const thread = data.threads.find(item => item.id === id && !item.archivedAt);
+    if (!thread || !this.canRead(thread, actor)) throw new Error('Space is unavailable or you are not an invited participant.');
+    if (thread.scope === 'external') throw new Error('External-contact spaces do not support agent topics.');
+    const topics = thread.topics ?? [];
+    if (topics.length >= 100) throw new Error('This space already has the maximum of 100 topics.');
+    const requestedReviewer = input.reviewerAgentId?.trim();
+    const reviewerAgentId = requestedReviewer ?? (actor.type === 'agent' ? actor.id : 'main');
+    if (reviewerAgentId !== 'main' && !this.isKnownAgent(reviewerAgentId)) {
+      throw new Error(`Reviewer agent ${reviewerAgentId} is unavailable.`);
+    }
+    if (thread.scope !== 'open' && reviewerAgentId !== 'main'
+      && !thread.participants.includes(reviewerAgentId) && reviewerAgentId !== actor.id) {
+      throw new Error('The reviewer must be a participating agent in this space.');
+    }
+    if (reviewerAgentId === 'main') thread.participants = [...new Set([...thread.participants, 'main'])];
+    const createdAt = Date.now();
+    topics.push({
+      id: crypto.randomUUID(),
+      title,
+      createdByAgentId: actor.type === 'agent' ? actor.id : 'user',
+      reviewerAgentId,
+      createdAt,
+      updatedAt: createdAt,
+      lastReviewedAt: createdAt,
+    });
+    thread.topics = topics;
+    thread.updatedAt = createdAt;
+    this.write(data);
+    return structuredClone(thread);
+  }
+
+  startSpaceReviews(handler: (thread: AgentThread, topic: SpaceTopic, posts: ThreadPost[]) => Promise<void>): void {
+    this.stopSpaceReviews();
+    const run = async () => {
+      if (this.processingSpaceReview) return;
+      this.processingSpaceReview = true;
+      let nextDelay = 60_000 + Math.floor(Math.random() * 30_001);
+      try {
+        const data = readData(this.filePath);
+        let clearedStaleSchedule = false;
+        const due = data.threads.flatMap(thread => (thread.topics ?? []).flatMap(topic => {
+          if (thread.archivedAt || !topic.reviewScheduledAt) return [];
+          nextDelay = Math.min(nextDelay, Math.max(1_000, topic.reviewScheduledAt - Date.now()));
+          if (topic.reviewScheduledAt > Date.now()) return [];
+          const posts = thread.posts.filter(post => post.topicId === topic.id
+            && post.createdAt > topic.lastReviewedAt
+            && post.author.type !== 'external'
+            && post.author.id !== topic.reviewerAgentId);
+          if (!posts.length) {
+            topic.reviewScheduledAt = undefined;
+            clearedStaleSchedule = true;
+            return [];
+          }
+          return [{ thread, topic, posts }];
+        }));
+        if (clearedStaleSchedule) this.write(data);
+        for (const item of due.slice(0, 3)) {
+          try {
+            await handler(structuredClone(item.thread), structuredClone(item.topic), structuredClone(item.posts));
+            const latest = readData(this.filePath);
+            const currentThread = latest.threads.find(value => value.id === item.thread.id);
+            const currentTopic = currentThread?.topics?.find(value => value.id === item.topic.id);
+            if (currentTopic) {
+              currentTopic.lastReviewedAt = Math.max(...item.posts.map(post => post.createdAt));
+              const hasUnreviewedPosts = currentThread!.posts.some(post => post.topicId === currentTopic.id
+                && post.createdAt > currentTopic.lastReviewedAt
+                && post.author.type !== 'external'
+                && post.author.id !== currentTopic.reviewerAgentId);
+              if (!hasUnreviewedPosts) currentTopic.reviewScheduledAt = undefined;
+              else if (!currentTopic.reviewScheduledAt || currentTopic.reviewScheduledAt <= Date.now()) {
+                currentTopic.reviewScheduledAt = Date.now() + 60_000 + Math.floor(Math.random() * 30_001);
+              }
+              currentThread!.updatedAt = Date.now();
+              this.write(latest);
+            }
+          } catch (error) {
+            console.error(`[spaces] Review failed for topic ${item.topic.id}:`, error);
+            const latest = readData(this.filePath);
+            const currentTopic = latest.threads.find(value => value.id === item.thread.id)?.topics?.find(value => value.id === item.topic.id);
+            if (currentTopic) {
+              currentTopic.reviewScheduledAt = Date.now() + 60_000 + Math.floor(Math.random() * 30_001);
+              this.write(latest);
+            }
+          }
+        }
+      } finally {
+        this.processingSpaceReview = false;
+        if (this.spaceReviewTimer) clearTimeout(this.spaceReviewTimer);
+        this.spaceReviewTimer = setTimeout(() => { void run(); }, nextDelay);
+        this.spaceReviewTimer.unref?.();
+      }
+    };
+    void run();
+  }
+
+  stopSpaceReviews(): void {
+    if (this.spaceReviewTimer) clearTimeout(this.spaceReviewTimer);
+    this.spaceReviewTimer = null;
   }
 
   requestUserHelp(actor: ThreadActor, titleValue: string, bodyValue: string): AgentThread {

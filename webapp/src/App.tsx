@@ -5,34 +5,39 @@ import remarkGfm from 'remark-gfm';
 import {
   Activity, ArrowRight, ArrowUpRight, Bell, Bot, Check, ChevronDown, CircleAlert, CircleCheck, Clock3, Command, Copy, Cpu,
   Archive, Bookmark, Brain, Cloud, Database, Download, Gauge, Globe, Globe2, HardDrive, History, Info, Landmark, LayoutDashboard, Leaf, Maximize2, Menu, MessageSquare, Minimize2, Moon, Network,
-  Biohazard, ChevronUp, FolderOpen, MessagesSquare, Pause, Plus, Power, RefreshCw, Search, Send, Server, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Sun, TerminalSquare, Thermometer, Upload, Users, Workflow, Wrench, X,
+  Biohazard, ChevronUp, FolderOpen, MessagesSquare, Pause, Pencil, Plus, Plug, Power, RefreshCw, Search, Server, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Sun, TerminalSquare, Thermometer, Upload, Users, Workflow, Wrench, X,
 } from 'lucide-react';
 import type { AgentProfile, ChatMessage, GatewayConfig, GatewayStatus, HostResourceSnapshot, MemoryNodeContext, SessionSummary, ThreadUserHelpRequest, ToolSummary, ViewId, WorkspaceAgent, WorkspaceProject, WorkspaceRun } from './types';
 import type { CloudProviderStatus, GoogleWorkspaceGrant, TailscaleIntegrationStatus } from './components/IntegrationsView';
 import ActivityOrb from './components/ActivityOrb';
 import BrowserLoading from './components/BrowserLoading';
-import { getActivityFromStatus, getActivityOrbState, getToolActivity, isAgentActivity, type AgentActivity } from './components/activity-orb-state';
-import HeroAgentOrb from './components/HeroAgentOrb';
+import { getActivityFromStatus, getActivityOrbState, getHeroOrbState, getToolActivity, isAgentActivity, type HeroOrbState } from './components/activity-orb-state';
+import { createDefaultHeroOrbAppearance, HERO_ORB_APPEARANCE_STORAGE_KEY, HERO_ORB_STATES, parseHeroOrbAppearance } from './components/hero-orb-appearance';
+import type { HeroOrbAppearance } from './components/hero-orb-appearance';
 import ReasoningDisplay from './components/ReasoningDisplay';
 import CronPanel from './components/CronPanel';
 import ThreadsPanel from './components/ThreadsPanel';
+import { ChatSendButton, ChatVoiceMenu, ChatVoiceProvider } from './components/ChatVoiceControls';
 import { AgentIcon as AgentGlyph, AgentIconPicker } from './components/AgentIconPicker';
-
 declare const __SYMBIOTE_VERSION__: string;
 
 const GamesView = lazy(() => import('./components/GamesView'));
-const IntelligenceMap = lazy(() => import('./components/IntelligenceMap'));
+const MarketsView = lazy(() => import('./components/MarketsView'));
+const IntelligenceView = lazy(() => import('./components/IntelligenceView'));
+const ApiRegistryView = lazy(() => import('./components/ApiRegistryView'));
 const MemoryMap = lazy(() => import('./components/MemoryMap'));
 const IntegrationsView = lazy(() => import('./components/IntegrationsView'));
+const ConnectorsView = lazy(() => import('./components/ConnectorsView'));
 const ProjectIDE = lazy(() => import('./components/ProjectIDE'));
 const ProjectsPanel = lazy(() => import('./components/ProjectsPanel'));
+const HeroAgentOrb = lazy(() => import('./components/HeroAgentOrb'));
 
 const NAVIGATION: { id: ViewId; label: string; icon: typeof LayoutDashboard; group: string }[] = [
   { id: 'workspace', label: 'Overview', icon: LayoutDashboard, group: 'Work' },
   { id: 'projects', label: 'Projects', icon: FolderOpen, group: 'Work' },
   { id: 'agents', label: 'Agents', icon: Users, group: 'Work' },
   { id: 'runs', label: 'Tasks', icon: Activity, group: 'Work' },
-  { id: 'threads', label: 'Threads', icon: MessagesSquare, group: 'Play' },
+  { id: 'threads', label: 'Spaces', icon: MessagesSquare, group: 'Play' },
   { id: 'games', label: 'Zen', icon: Leaf, group: 'Play' },
   { id: 'browser', label: 'Browser', icon: Globe, group: 'Tools' },
   { id: 'ide', label: 'IDE', icon: TerminalSquare, group: 'Tools' },
@@ -40,9 +45,11 @@ const NAVIGATION: { id: ViewId; label: string; icon: typeof LayoutDashboard; gro
   { id: 'intelligence', label: 'Intelligence', icon: Globe2, group: 'Tools' },
   { id: 'memory', label: 'Memory', icon: Brain, group: 'Runtime' },
   { id: 'integrations', label: 'Integrations', icon: Network, group: 'Runtime' },
+  { id: 'connectors', label: 'Connectors', icon: Plug, group: 'Runtime' },
   { id: 'settings', label: 'Configuration', icon: Settings2, group: 'Runtime' },
   { id: 'operations', label: 'Health', icon: Activity, group: 'Runtime' },
   { id: 'tools', label: 'Tool registry', icon: Wrench, group: 'Runtime' },
+  { id: 'api-registry', label: 'API Registry', icon: Database, group: 'Runtime' },
 ];
 
 const REFRESH_INTERVAL_KEY = 'symbiote-telemetry-refresh-ms';
@@ -110,6 +117,20 @@ function initialAppearance(): AppearanceSettings {
     // Invalid saved settings are ignored.
   }
   return { brightness: fallbackBrightness, primaryHue: 145, secondaryHue: 13 };
+}
+
+function initialHeroOrbAppearance(): HeroOrbAppearance {
+  if (typeof window === 'undefined') return createDefaultHeroOrbAppearance();
+  try {
+    const stored = window.localStorage.getItem(HERO_ORB_APPEARANCE_STORAGE_KEY);
+    if (!stored) return createDefaultHeroOrbAppearance();
+    const settings = parseHeroOrbAppearance(JSON.parse(stored) as unknown);
+    if (settings) return settings;
+    console.warn('[hero-orb] Saved appearance has invalid values; using defaults.');
+  } catch (failure) {
+    console.warn('[hero-orb] Saved appearance could not be loaded:', failure);
+  }
+  return createDefaultHeroOrbAppearance();
 }
 
 function createClientId(): string {
@@ -290,6 +311,28 @@ async function api<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const payload = await response.json().catch(() => ({})) as { error?: string };
   if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
   return payload as T;
+}
+
+async function apiAudio(endpoint: string, options?: RequestInit): Promise<Blob> {
+  let token = '';
+  try {
+    token = window.sessionStorage.getItem('symbiote-lan-token') ?? '';
+  } catch {
+    // A local connection still works if browser storage is unavailable.
+  }
+  const response = await fetch(endpoint, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options?.headers,
+    },
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(payload.error || `Request failed (${response.status})`);
+  }
+  return response.blob();
 }
 
 async function streamApi<T>(
@@ -1009,6 +1052,7 @@ function CommandActionDialog({ action, config, onClose, onSubmit }: {
 export default function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [appearance, setAppearance] = useState<AppearanceSettings>(initialAppearance);
+  const [orbAppearance, setOrbAppearance] = useState<HeroOrbAppearance>(initialHeroOrbAppearance);
 
   const [resolvedProjectIds, setResolvedProjectIds] = useState<Set<string>>(() => new Set());
 
@@ -1029,6 +1073,7 @@ export default function App() {
   const appearanceRevisionRef = useRef(0);
   const appearanceRef = useRef(appearance);
   const appearanceSyncErrorRef = useRef(false);
+  const orbAppearanceStorageFailureRef = useRef(false);
   appearanceRef.current = appearance;
   const changeAppearance = (next: AppearanceSettings) => {
     appearanceRevisionRef.current++;
@@ -1041,6 +1086,7 @@ export default function App() {
   const [view, setView] = useState<ViewId>('workspace');
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(readRefreshInterval);
   const [threadToOpen, setThreadToOpen] = useState('');
+  const [marketsVoicePrompt, setMarketsVoicePrompt] = useState('');
   const [googleWorkspaceGrant, setGoogleWorkspaceGrant] = useState<GoogleWorkspaceGrant | null>(null);
   const [cloudProviderStatus, setCloudProviderStatus] = useState<CloudProviderStatus>({
     azure: false, oci: false, n8n: false, kaggle: false,
@@ -1063,6 +1109,7 @@ export default function App() {
   const [workspaceProjectId, setWorkspaceProjectId] = useState('');
   const [workspaceAgentId, setWorkspaceAgentId] = useState('');
   const [tools, setTools] = useState<ToolSummary[]>([]);
+  const [vectorDataPointCount, setVectorDataPointCount] = useState<number | null>(null);
   const [runs, setRuns] = useState<WorkspaceRun[]>([]);
   const [agents, setAgents] = useState<WorkspaceAgent[]>([]);
   const [threadHelpRequests, setThreadHelpRequests] = useState<ThreadUserHelpRequest[]>([]);
@@ -1071,6 +1118,7 @@ export default function App() {
   const [memoryHistory, setMemoryHistory] = useState<number[]>([]);
   const [hostHistory, setHostHistory] = useState<HostResourceSnapshot[]>([]);
   const [gatewayConnected, setGatewayConnected] = useState(false);
+  const [gatewayConnectionState, setGatewayConnectionState] = useState<'retrying' | 'live' | 'disconnected'>('retrying');
   const [accessChecked, setAccessChecked] = useState(false);
   const [accessRequired, setAccessRequired] = useState(false);
   const [accessGranted, setAccessGranted] = useState(false);
@@ -1114,8 +1162,11 @@ export default function App() {
   const [error, setError] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [recentThreadsOpen, setRecentThreadsOpen] = useState(false);
+  const [renamingSessionId, setRenamingSessionId] = useState('');
+  const [sessionLabelDraft, setSessionLabelDraft] = useState('');
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const previousViewRef = useRef<ViewId>(view);
   const statusRequest = useRef<Promise<void> | null>(null);
   const activeTurnSessionId = useRef<string | null>(null);
   const nativeNotifiedIds = useRef(new Set<string>());
@@ -1139,14 +1190,18 @@ export default function App() {
   const contextAgents = useMemo(() => workspaceAgentId || workspaceProjectId
     ? agents.filter(agent => workspaceAgentId ? agent.agentId === workspaceAgentId : agent.projectId === workspaceProjectId)
     : agents, [agents, workspaceAgentId, workspaceProjectId]);
-  const heroActivity = useMemo<AgentActivity>(() => {
+  const heroActivity = useMemo<HeroOrbState>(() => {
     const liveMessage = messages.slice().reverse().find(message => message.role === 'assistant' && message.streaming);
-    if (liveMessage?.activeTool) return getToolActivity(liveMessage.activeTool).activity;
-    if (isAgentActivity(liveMessage?.activityState)) return liveMessage.activityState;
+    if (liveMessage) {
+      if (liveMessage.activeTool) return 'executing';
+      return isAgentActivity(liveMessage.activityState) ? getHeroOrbState(liveMessage.activityState) : 'thinking';
+    }
     const activeRun = runs.filter(run => run.status === 'running').sort((left, right) => right.startedAt - left.startedAt)[0];
-    if (activeRun?.activeTool) return getToolActivity(activeRun.activeTool).activity;
-    if (activeRun?.activity) return getActivityFromStatus(activeRun.activity);
-    return status?.activeTurns ? 'thinking' : 'listening';
+    if (activeRun) {
+      if (activeRun.activeTool) return 'executing';
+      return activeRun.activity ? getHeroOrbState(getActivityFromStatus(activeRun.activity)) : 'thinking';
+    }
+    return status?.activeTurns ? 'thinking' : 'idle';
   }, [messages, runs, status?.activeTurns]);
   const googleWorkspaceOnline = Boolean(googleWorkspaceGrant && googleWorkspaceGrant.expiresAt > Date.now());
   const cloudIntegrations: Array<{ id: string; label: string; online: boolean; view: ViewId; icon: ReactNode }> = [
@@ -1158,6 +1213,24 @@ export default function App() {
     { id: 'tailscale', label: 'Tailscale', online: Boolean(tailscaleStatus?.enabled && tailscaleStatus.connected), view: 'integrations', icon: <Network /> },
   ];
   const sessionDraft = sessionDrafts[activeSessionId] ?? '';
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshVectorCount = async () => {
+      try {
+        const dashboard = await api<{ vectors: { count: number } }>('/api/resource-aggregator');
+        if (!cancelled) setVectorDataPointCount(dashboard.vectors.count);
+      } catch {
+        if (!cancelled) setVectorDataPointCount(null);
+      }
+    };
+    void refreshVectorCount();
+    const timer = window.setInterval(() => { void refreshVectorCount(); }, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1219,6 +1292,18 @@ export default function App() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [appearance]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(HERO_ORB_APPEARANCE_STORAGE_KEY, JSON.stringify(orbAppearance));
+      orbAppearanceStorageFailureRef.current = false;
+    } catch (failure) {
+      if (!orbAppearanceStorageFailureRef.current) {
+        console.warn('[hero-orb] Appearance changes could not be saved:', failure);
+        orbAppearanceStorageFailureRef.current = true;
+      }
+    }
+  }, [orbAppearance]);
 
   useEffect(() => {
     const nextTheme: Theme = appearance.brightness >= 50 ? 'light' : 'dark';
@@ -1289,6 +1374,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => setError(''), 8_000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
+
+  useEffect(() => {
     try {
       window.localStorage.setItem('symbiote-cleared-notifications', JSON.stringify(clearedNotificationIds.slice(-200)));
     } catch {
@@ -1341,10 +1432,12 @@ export default function App() {
 
   const refreshStatus = useCallback((): Promise<void> => {
     if (statusRequest.current) return statusRequest.current;
+    setGatewayConnectionState('retrying');
     const request = api<GatewayStatus>('/api/status')
       .then(fresh => {
         setStatus(fresh);
         setGatewayConnected(true);
+        setGatewayConnectionState('live');
         setMemoryHistory(previous => [...previous.slice(-59), fresh.memory?.rss ?? 0]);
         const hostSample = fresh.metrics?.system?.host;
         if (hostSample?.sampledAt) {
@@ -1356,6 +1449,7 @@ export default function App() {
       })
       .catch(failure => {
         setGatewayConnected(false);
+        setGatewayConnectionState('disconnected');
         throw failure;
       })
       .finally(() => {
@@ -1683,8 +1777,16 @@ export default function App() {
   }, [view]);
 
   useEffect(() => {
-    if (view === 'chat') bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    if (view !== 'chat') return;
+    const stream = bottomRef.current?.parentElement;
+    if (stream) stream.scrollTo({ top: stream.scrollHeight, behavior: 'smooth' });
   }, [messages, sending, view]);
+
+  useEffect(() => {
+    if (previousViewRef.current === view) return;
+    previousViewRef.current = view;
+    if (view !== 'chat') window.scrollTo(0, 0);
+  }, [view]);
 
   const filteredTools = useMemo(() => {
     const query = toolQuery.trim().toLowerCase();
@@ -1717,11 +1819,20 @@ export default function App() {
       await refreshAll();
       setActiveSessionId(created.id);
       navigate('chat');
+      return created.id;
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Could not create a conversation.');
+      return undefined;
     } finally {
       setCreatingSession(false);
     }
+  };
+
+  const draftBrowserTask = async (prompt: string) => {
+    const sessionId = activeSessionId || await createSession();
+    if (!sessionId) return;
+    setSessionDrafts(previous => ({ ...previous, [sessionId]: prompt }));
+    navigate('chat');
   };
 
   const launchRun = async (prompt: string, selectedSessionId: string): Promise<boolean> => {
@@ -1971,6 +2082,27 @@ export default function App() {
     }
   };
 
+  const renameSession = async (id: string, label: string) => {
+    const normalizedLabel = label.trim();
+    if (!normalizedLabel || normalizedLabel.length > 80) {
+      setError('Conversation names must contain 1-80 characters.');
+      return;
+    }
+    try {
+      await api<{ renamed: boolean }>(`/api/sessions/${encodeURIComponent(id)}/label`, {
+        method: 'PUT',
+        body: JSON.stringify({ label: normalizedLabel }),
+      });
+      setSessions(current => current.map(session => session.id === id ? { ...session, label: normalizedLabel } : session));
+      setGammaHeartbeatSession(current => current?.id === id ? { ...current, label: normalizedLabel } : current);
+      setRenamingSessionId('');
+      setSessionLabelDraft('');
+      setError('');
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Could not rename conversation.');
+    }
+  };
+
   const createProject = async (name: string, scope = '') => {
     const created = await api<WorkspaceProject>('/api/projects', {
       method: 'POST',
@@ -1990,19 +2122,20 @@ export default function App() {
     setWorkspaceAgentId(created.id);
   };
 
-  const sendMessage = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const text = sessionDraft.trim();
-    if (!text || !activeSessionId || sending) return;
+  const sendMessage = async (event?: FormEvent<HTMLFormElement>, overrideText?: string, overrideSessionId?: string) => {
+    event?.preventDefault();
+    const sessionId = overrideSessionId ?? activeSessionId;
+    const text = (overrideText ?? sessionDraft).trim();
+    if (!text || !sessionId || sending) return;
     const userMessage: ChatMessage = { id: createClientId(), role: 'user', content: text, timestamp: Date.now(), tokensIn: Math.ceil(text.length / 4), tokenCountsEstimated: true };
     const assistantId = createClientId();
     let streamedText = '';
-    activeTurnSessionId.current = activeSessionId;
+    activeTurnSessionId.current = sessionId;
     setMessages(previous => [...previous, userMessage, { id: assistantId, role: 'assistant', content: '', timestamp: Date.now(), streaming: true, thinking: true, activityState: 'thinking' }]);
     setSending(true);
     setSessionDrafts(previous => {
       const next = { ...previous };
-      delete next[activeSessionId];
+      delete next[sessionId];
       return next;
     });
     setError('');
@@ -2016,7 +2149,7 @@ export default function App() {
         toolCalls?: Array<{ name: string; input: Record<string, unknown>; result: string }>;
       }>('/api/chat', {
         text,
-        sessionId: activeSessionId,
+        sessionId,
         ...(googleWorkspaceOnline && googleWorkspaceGrant ? { googleWorkspaceAccessToken: googleWorkspaceGrant.accessToken } : {}),
       }, streamed => {
         if (streamed.type === 'todo_update') {
@@ -2062,7 +2195,7 @@ export default function App() {
         }));
       });
       if (!outcome.complete) {
-        const saved = await api<ChatMessage[]>(`/api/sessions/${encodeURIComponent(activeSessionId)}/messages`);
+        const saved = await api<ChatMessage[]>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
         const latestAssistant = findSavedAssistantResponse(saved, text);
         if (latestAssistant) {
           setMessages(saved);
@@ -2365,6 +2498,69 @@ export default function App() {
   }
 
   return (
+    <ChatVoiceProvider
+      request={api}
+      requestAudio={apiAudio}
+      agentName={activeProfile?.name ?? config?.agentName ?? config?.name ?? 'Agent'}
+      latestAssistantMessage={messages.slice().reverse().find(message => message.role === 'assistant' && !message.streaming && !message.progressUpdate && message.content.trim())}
+      onDictation={transcript => {
+        if (!activeSessionId) {
+          setCommandNotice('Start a conversation before dictating a message.');
+          return;
+        }
+        setSessionDrafts(previous => {
+          const current = previous[activeSessionId]?.trim() ?? '';
+          return { ...previous, [activeSessionId]: current ? `${current} ${transcript}` : transcript };
+        });
+        navigate('chat');
+      }}
+      onWakeWord={async () => {
+        if (sending || activeTurnSessionId.current) {
+          setCommandNotice('Finish the current agent turn before starting a new hands-free chat.');
+          return undefined;
+        }
+        try {
+          const created = await api<{ id: string }>('/api/sessions', {
+            method: 'POST',
+            body: JSON.stringify({
+              name: 'New conversation',
+              ...(workspaceProjectId ? { projectId: workspaceProjectId } : {}),
+              ...(workspaceAgentId ? { agentId: workspaceAgentId } : {}),
+            }),
+          });
+          const now = Date.now();
+          setSessions(previous => [{
+            id: created.id,
+            label: 'New conversation',
+            createdAt: now,
+            updatedAt: now,
+            messageCount: 0,
+          }, ...previous.filter(session => session.id !== created.id)]);
+          setActiveSessionId(created.id);
+          setMessages([]);
+          setSessionDrafts(previous => ({ ...previous, [created.id]: '' }));
+          navigate('chat');
+          return created.id;
+        } catch (failure) {
+          setError(failure instanceof Error ? failure.message : 'Could not open a new hands-free conversation.');
+          return undefined;
+        }
+      }}
+      onHandsFreeDictation={(sessionId, transcript) => {
+        setSessionDrafts(previous => {
+          const current = previous[sessionId]?.trim() ?? '';
+          return { ...previous, [sessionId]: current ? `${current} ${transcript}` : transcript };
+        });
+      }}
+      onHandsFreeSend={(sessionId, transcript) => {
+        if (sending || activeTurnSessionId.current) {
+          setCommandNotice('Finish the current agent turn before sending this voice message.');
+          return false;
+        }
+        void sendMessage(undefined, transcript, sessionId);
+        return true;
+      }}
+    >
     <div className={`control-room${view === 'chat' ? ' control-room-chat' : ''}`} data-theme={theme}>
       <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className={`sidebar${mobileNavOpen ? ' sidebar-open' : ''}`} aria-label="Main navigation">
@@ -2400,6 +2596,7 @@ export default function App() {
                     <Icon size={17} strokeWidth={1.8} />
                     <span>{item.label}</span>
                     {item.id === 'tools' && <span className="nav-count">{tools.length || '—'}</span>}
+                    {item.id === 'api-registry' && <span className="nav-count">{vectorDataPointCount?.toLocaleString() ?? '—'}</span>}
                     {item.id === 'runs' && runs.some(run => run.status === 'running') && <span className="nav-count">{runs.filter(run => run.status === 'running').length}</span>}
                     {item.id === 'agents' && <span className="nav-count">{workspaceAgents.length + agents.length}</span>}
                     {item.id === 'projects' && <span className="nav-count">{projects.filter(project => !project.archivedAt).length}</span>}
@@ -2414,7 +2611,7 @@ export default function App() {
         <div className="sidebar-session">
           <div className="sidebar-section-heading">
             <button className="sidebar-thread-toggle" type="button" onClick={() => setRecentThreadsOpen(open => !open)} aria-expanded={recentThreadsOpen} aria-controls="sidebar-thread-list">
-              <span>RECENT THREADS</span><ChevronUp size={14} className={recentThreadsOpen ? 'thread-toggle-open' : ''} />
+              <span>RECENT CONVERSATIONS</span><ChevronUp size={14} className={recentThreadsOpen ? 'thread-toggle-open' : ''} />
             </button>
             <div className="sidebar-thread-actions">
               <button className="icon-button small" type="button" onClick={() => void openGammaHeartbeatConversation()} aria-label="Open Gamma heartbeat conversation" title="Gamma heartbeat"><Bot size={14} /></button>
@@ -2424,10 +2621,41 @@ export default function App() {
           <div id="sidebar-thread-list" className="sidebar-thread-popover" data-open={recentThreadsOpen} role="region" aria-label="Previous conversations" aria-hidden={!recentThreadsOpen} inert={!recentThreadsOpen}>
             <div className="sidebar-thread-list">
               {recentThreadSessions.map(session => (
-                <button key={session.id} className={`recent-thread${activeSessionId === session.id && view === 'chat' ? ' recent-thread-active' : ''}`} onClick={() => { selectSession(session.id); navigate('chat'); setRecentThreadsOpen(false); }}>
-                  <span className="thread-dot" />
-                  <span className="recent-thread-copy"><strong>{session.label || 'Conversation'}</strong><small>{formatRelative(session.updatedAt)}</small></span>
-                </button>
+                <div key={session.id} className="recent-thread-row">
+                  {renamingSessionId === session.id ? (
+                    <form className="recent-thread-rename" onSubmit={event => { event.preventDefault(); void renameSession(session.id, sessionLabelDraft); }}>
+                      <input
+                        autoFocus
+                        aria-label="Conversation name"
+                        value={sessionLabelDraft}
+                        maxLength={80}
+                        onChange={event => setSessionLabelDraft(event.target.value)}
+                        onKeyDown={event => {
+                          if (event.key === 'Escape') {
+                            setRenamingSessionId('');
+                            setSessionLabelDraft('');
+                          }
+                        }}
+                      />
+                      <button className="icon-button small" type="submit" aria-label="Save conversation name" title="Save"><Check size={13} /></button>
+                      <button className="icon-button small" type="button" onClick={() => { setRenamingSessionId(''); setSessionLabelDraft(''); }} aria-label="Cancel rename" title="Cancel"><X size={13} /></button>
+                    </form>
+                  ) : (
+                    <>
+                      <button type="button" className={`recent-thread${activeSessionId === session.id && view === 'chat' ? ' recent-thread-active' : ''}`} onClick={() => { selectSession(session.id); navigate('chat'); setRecentThreadsOpen(false); }}>
+                        <span className="thread-dot" />
+                        <span className="recent-thread-copy"><strong>{session.label || 'Conversation'}</strong><small>{formatRelative(session.updatedAt)}</small></span>
+                      </button>
+                      <button
+                        className="icon-button small recent-thread-rename-button"
+                        type="button"
+                        onClick={() => { setRenamingSessionId(session.id); setSessionLabelDraft(session.label || 'Conversation'); }}
+                        aria-label={`Rename ${session.label || 'conversation'}`}
+                        title="Rename conversation"
+                      ><Pencil size={12} /></button>
+                    </>
+                  )}
+                </div>
               ))}
               {recentThreadSessions.length === 0 && <p className="sidebar-empty">Your conversations will appear here.</p>}
             </div>
@@ -2447,11 +2675,14 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-left">
             <button className="icon-button mobile-menu" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation"><Menu size={19} /></button>
+            <a className="topbar-brand" href="/" aria-label="Symbiote Control Room home">
+              <Biohazard size={15} strokeWidth={1.8} aria-hidden="true" />
+              <span>SYMBIOTE</span>
+            </a>
             <div className="breadcrumb"><span className="breadcrumb-divider">/</span><strong>{view === 'chat' ? activeSession?.label || 'Conversation' : currentNavigation.label}</strong></div>
           </div>
           <div className="topbar-right">
             {isDesktopApp && <button className="icon-button utility-button" onClick={() => void window.symbioteDesktop?.openMini()} aria-label="Open floating mini chat" title="Open floating mini chat"><Minimize2 size={16} /></button>}
-            <span className={`live-indicator${isOnline ? ' live-indicator-on' : ' live-indicator-retrying'}`}><span />{isOnline ? 'LIVE' : 'RETRYING'}</span>
             <button className="icon-button utility-button" onClick={() => { setCommandOpen(true); setCommandQuery(''); }} aria-label="Open command menu (Ctrl+K)" title="Command menu · Ctrl+K">
               <Command size={16} />
             </button>
@@ -2459,7 +2690,13 @@ export default function App() {
             <button className={`icon-button utility-button${checkingForUpdates ? ' is-refreshing' : ''}`} onClick={() => void checkForUpdates()} aria-label={checkingForUpdates ? 'Checking for updates' : 'Check for updates'} title={checkingForUpdates ? 'Checking for updates…' : 'Check for updates'} disabled={checkingForUpdates}>
               <Download size={16} />
             </button>
-            <button className={`icon-button refresh-button${refreshing ? ' is-refreshing' : ''}`} onClick={() => void refreshAll(true)} aria-label="Refresh runtime data" disabled={refreshing}>
+            <button
+              className={`icon-button refresh-button refresh-button-${gatewayConnectionState}${refreshing ? ' is-refreshing' : ''}`}
+              onClick={() => void refreshAll(true)}
+              aria-label={`Refresh runtime data; gateway ${gatewayConnectionState}`}
+              title={`Refresh runtime data · Gateway ${gatewayConnectionState}`}
+              disabled={refreshing}
+            >
               <RefreshCw size={16} />
             </button>
             <div className="notification-anchor">
@@ -2484,6 +2721,7 @@ export default function App() {
                   <ResourceStatusStrip host={status?.metrics?.system?.host} />
                 </section>}
             </div>
+            <ChatVoiceMenu />
           </div>
         </header>
 
@@ -2519,6 +2757,7 @@ export default function App() {
                   profiles={workspaceAgents}
                   activeSessionId={activeSessionId}
                   agentActivity={heroActivity}
+                  orbAppearance={orbAppearance}
                   agents={agents}
                   channels={channelList}
                   memoryHistory={memoryHistory}
@@ -2592,7 +2831,7 @@ export default function App() {
               )}
               {view === 'threads' && (
                 <div className="page threads-page">
-                  <PageHeading eyebrow="MULTI-AGENT COLLABORATION" title="Threads" detail="Coordinate work across agents, review help requests, and keep private project discussions in one place." />
+                  <PageHeading eyebrow="MULTI-AGENT COLLABORATION" title="Spaces" detail="Coordinate work across agents, share topic-focused discussions, and review progress together." />
                   <ThreadsPanel request={api} projects={projects} profiles={workspaceAgents} selectedProjectId={workspaceProjectId} requestedThreadId={threadToOpen} />
                 </div>
               )}
@@ -2616,9 +2855,10 @@ export default function App() {
                   creatingSession={creatingSession}
                 />
               )}
-              {view === 'browser' && <BrowserView />}
+              {view === 'browser' && <BrowserView onAskAgent={draftBrowserTask} />}
               {view === 'memory' && <Suspense fallback={<div className="loading-state"><ActivityOrb label="Loading the memory map" loading /><span>Loading memory map…</span></div>}><MemoryMap request={api} onSendNode={sendMemoryNode} /></Suspense>}
               {view === 'integrations' && <Suspense fallback={<div className="loading-state"><ActivityOrb label="Loading integrations" loading /><span>Loading integrations…</span></div>}><IntegrationsView grant={googleWorkspaceGrant} onGrantChange={setGoogleWorkspaceGrant} request={api} cloudStatus={cloudProviderStatus} onCloudStatusChange={(provider, configured) => setCloudProviderStatus(previous => ({ ...previous, [provider]: configured }))} tailscaleStatus={tailscaleStatus} onTailscaleStatusChange={setTailscaleStatus} /></Suspense>}
+              {view === 'connectors' && <Suspense fallback={<div className="loading-state"><ActivityOrb label="Loading connectors" loading /><span>Loading connector workspace…</span></div>}><ConnectorsView request={api} onNavigate={navigate} /></Suspense>}
               {view === 'operations' && (
                 <OperationsView
                   status={status}
@@ -2635,12 +2875,14 @@ export default function App() {
                   onClearIncidents={clearHealthIncidents}
                 />
               )}
-              {(view === 'tools' || view === 'markets') && (
+              {view === 'tools' && (
                 <ToolsView tools={filteredTools} total={tools.length} query={toolQuery} onQuery={setToolQuery} />
               )}
               {view === 'settings' && <SettingsView config={config} status={status} refreshIntervalMs={refreshIntervalMs} onRefreshIntervalChange={setRefreshIntervalMs} />}
               {view === 'games' && <Suspense fallback={<div className="loading-state"><ActivityOrb label="Loading games" loading /><span>Loading games…</span></div>}><GamesView request={api} /></Suspense>}
-              {view === 'intelligence' && <Suspense fallback={<div className="loading-state"><ActivityOrb label="Loading intelligence map" loading /><span>Loading intelligence map…</span></div>}><IntelligenceMap markers={[]} onSelectMarker={() => {}} /></Suspense>}
+              {view === 'markets' && <Suspense fallback={<div className="loading-state"><ActivityOrb label="Loading market data" loading /><span>Loading market data…</span></div>}><MarketsView request={api} stream={streamApi} initialPrompt={marketsVoicePrompt} onInitialPromptConsumed={() => setMarketsVoicePrompt('')} /></Suspense>}
+              {view === 'intelligence' && <Suspense fallback={<div className="loading-state"><ActivityOrb label="Loading intelligence" loading /><span>Loading intelligence…</span></div>}><IntelligenceView request={api} /></Suspense>}
+              {view === 'api-registry' && <Suspense fallback={<div className="loading-state"><ActivityOrb label="Loading API registry" loading /><span>Loading API registry…</span></div>}><ApiRegistryView request={api} /></Suspense>}
             </>
           )}
         </main>
@@ -2676,7 +2918,13 @@ export default function App() {
         />
       </div>
       {notificationsOpen && <button className="notification-dismiss" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)} />}
-      {identityOpen && config && <AgentSettingsDialog config={config} onSave={updateIdentity} onClose={() => setIdentityOpen(false)} />}
+      {identityOpen && config && <AgentSettingsDialog
+        config={config}
+        onSave={updateIdentity}
+        orbAppearance={orbAppearance}
+        onOrbAppearanceChange={setOrbAppearance}
+        onClose={() => setIdentityOpen(false)}
+      />}
       {commandOpen && <CommandPalette
         query={commandQuery}
         onQuery={setCommandQuery}
@@ -2691,12 +2939,15 @@ export default function App() {
       />}
       {commandAction && <CommandActionDialog action={commandAction} config={config} onClose={() => setCommandAction(null)} onSubmit={runCommandAction} />}
     </div>
+    </ChatVoiceProvider>
   );
 }
 
-function AgentSettingsDialog({ config, onSave, onClose }: {
+function AgentSettingsDialog({ config, onSave, orbAppearance, onOrbAppearanceChange, onClose }: {
   config: GatewayConfig;
   onSave: (identity: { name: string; emoji: string; soulContent: string; agentsContent: string; instructions: string; avatarDataUrl: string | null }) => Promise<void>;
+  orbAppearance: HeroOrbAppearance;
+  onOrbAppearanceChange: (appearance: HeroOrbAppearance) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(config.agentName || config.name || '');
@@ -2768,6 +3019,51 @@ function AgentSettingsDialog({ config, onSave, onClose }: {
             <small>Used throughout the workspace and chat. Subagents keep their bot icon. PNG, JPEG, or WebP up to 2 MiB.</small>
             {avatarDataUrl && <button className="button button-secondary identity-avatar-remove" type="button" onClick={() => setAvatarDataUrl(null)}>Remove custom avatar</button>}
           </fieldset>
+          <fieldset className="identity-field hero-orb-appearance">
+            <legend>Hero orb appearance</legend>
+            <p className="hero-orb-appearance-help">Changes apply live and are saved on this device.</p>
+            <label className="hero-orb-color-control">
+              <span className="hero-orb-control-heading"><span>White → Black</span><output>{orbAppearance.brightness.toFixed(2)}</output></span>
+              <span className="hero-orb-range-ends" aria-hidden="true"><span>White</span><span>Black</span></span>
+              <input
+                className="hero-orb-range hero-orb-range-brightness"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={orbAppearance.brightness}
+                aria-label="Orb particle gradient from white through the state hue to black"
+                onChange={event => onOrbAppearanceChange({ ...orbAppearance, brightness: Number(event.target.value) })}
+              />
+            </label>
+            <div className="hero-orb-hue-controls" aria-label="Orb state hues">
+              {HERO_ORB_STATES.map(({ id, label }) => {
+                const hue = orbAppearance.hues[id];
+                return (
+                  <label className="hero-orb-color-control" key={id}>
+                    <span className="hero-orb-control-heading">
+                      <span><i className="hero-orb-color-swatch" style={{ backgroundColor: `hsl(${hue} 88% 55%)`, color: `hsl(${hue} 88% 55%)` }} aria-hidden="true" />{label}</span>
+                      <output>{Math.round(hue)}°</output>
+                    </span>
+                    <input
+                      className="hero-orb-range hero-orb-range-hue"
+                      type="range"
+                      min={0}
+                      max={360}
+                      step={1}
+                      value={hue}
+                      aria-label={`${label} orb hue`}
+                      onChange={event => onOrbAppearanceChange({
+                        ...orbAppearance,
+                        hues: { ...orbAppearance.hues, [id]: Number(event.target.value) },
+                      })}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+            <small>Brightness 0 is white, 0.50 is the current state color, and 1 is black.</small>
+          </fieldset>
           <label className="identity-field">
             <span>SOUL.md · agent identity and character</span>
             <textarea className="identity-file-editor" value={soulContent} onChange={event => setSoulContent(event.target.value)} maxLength={100_000} rows={12} spellCheck={false} />
@@ -2815,7 +3111,8 @@ function OverviewView(props: {
   projects: WorkspaceProject[];
   profiles: AgentProfile[];
   activeSessionId: string;
-  agentActivity: AgentActivity;
+  agentActivity: HeroOrbState;
+  orbAppearance: HeroOrbAppearance;
   agents: WorkspaceAgent[];
   channels: GatewayStatus['channels'];
   memoryHistory: number[];
@@ -2835,7 +3132,7 @@ function OverviewView(props: {
   creatingSession: boolean;
   cloudIntegrations: Array<{ id: string; label: string; online: boolean; view: ViewId; icon: ReactNode }>;
 }) {
-  const { status, config, sessions, projects, profiles, activeSessionId, agentActivity, agents, channels, memoryHistory, hostHistory, refreshIntervalMs, lastUpdated, onNavigate, onStartRun, startingRun, onNewSession, onOpenSession, onOpenProject, onOpenProfile, lighting, onResolveProject, onSendAgentResponse, creatingSession, cloudIntegrations } = props;
+  const { status, config, sessions, projects, profiles, activeSessionId, agentActivity, orbAppearance, agents, channels, memoryHistory, hostHistory, refreshIntervalMs, lastUpdated, onNavigate, onStartRun, startingRun, onNewSession, onOpenSession, onOpenProject, onOpenProfile, lighting, onResolveProject, onSendAgentResponse, creatingSession, cloudIntegrations } = props;
   const memory = status?.memory;
   const metrics = status?.metrics;
   const host = metrics?.system?.host;
@@ -2892,6 +3189,7 @@ function OverviewView(props: {
           profiles={profiles}
           agents={agents}
           activity={agentActivity}
+          orbAppearance={orbAppearance}
           onOpenSession={onOpenSession}
           onOpenProject={onOpenProject}
           onOpenProfile={onOpenProfile}
@@ -3081,6 +3379,12 @@ function HeroTaskForm({ sessionId, onStart, starting, onNavigate }: {
 }) {
   const [prompt, setPrompt] = useState('');
   const [heading] = useState(() => TASK_PROMPTS[Math.floor(Math.random() * TASK_PROMPTS.length)]);
+  useEffect(() => {
+    const textarea = document.getElementById('hero-task-prompt') as HTMLTextAreaElement | null;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 260)}px`;
+  }, [prompt]);
   return (
     <form className="hero-task" onSubmit={event => {
       event.preventDefault();
@@ -3109,9 +3413,12 @@ function HeroTaskForm({ sessionId, onStart, starting, onNavigate }: {
           event.currentTarget.style.height = 'auto';
           event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 260)}px`;
         }} maxLength={20_000} rows={1} placeholder="Describe the task…" />
-        <button type="submit" className="hero-task-submit" aria-label={starting ? 'Starting task' : 'Start task'} title={starting ? 'Starting task' : 'Start task'} disabled={starting || !prompt.trim()}>
-          {starting ? <ActivityOrb label="Starting task" compact loading /> : <ArrowRight size={15} />}
-        </button>
+        <ChatSendButton
+          className="hero-task-submit"
+          label="Start task"
+          disabled={starting}
+          onDictation={transcript => setPrompt(current => current.trim() ? `${current.trim()} ${transcript}` : transcript)}
+        />
       </div>
     </form>
   );
@@ -3135,12 +3442,69 @@ interface GraphNode {
 
 interface GraphPoint { x: number; y: number; }
 
-function WorkspaceGraph({ sessions, projects, profiles, agents, activity, onOpenSession, onOpenProject, onOpenProfile, lighting, onResolveProject, onSendAgentResponse }: {
+function spreadGraphNodes(nodes: GraphNode[], positions: Record<string, GraphPoint>, center: GraphPoint): void {
+  const movableNodes = nodes.filter(node => node.parentId && positions[node.id]);
+  const targets = movableNodes.map(node => ({ ...positions[node.id] }));
+  const minimumSpacing = 24;
+  const minimumRadius = 58;
+  const maximumRadius = 205;
+
+  for (let iteration = 0; iteration < 64; iteration++) {
+    const forces = movableNodes.map(() => ({ x: 0, y: 0 }));
+    let largestOverlap = 0;
+    for (let left = 0; left < movableNodes.length; left++) {
+      for (let right = left + 1; right < movableNodes.length; right++) {
+        const leftPoint = positions[movableNodes[left].id];
+        const rightPoint = positions[movableNodes[right].id];
+        let dx = rightPoint.x - leftPoint.x;
+        let dy = rightPoint.y - leftPoint.y;
+        let distance = Math.hypot(dx, dy);
+        if (distance >= minimumSpacing) continue;
+        if (distance < 0.001) {
+          const angle = (left * 0.61803398875 + right) * Math.PI * 2;
+          dx = Math.cos(angle);
+          dy = Math.sin(angle);
+          distance = 1;
+        }
+        const overlap = minimumSpacing - distance;
+        largestOverlap = Math.max(largestOverlap, overlap);
+        const displacement = Math.min(4, overlap * 0.55) / distance;
+        forces[left].x -= dx * displacement;
+        forces[left].y -= dy * displacement;
+        forces[right].x += dx * displacement;
+        forces[right].y += dy * displacement;
+      }
+    }
+
+    for (let index = 0; index < movableNodes.length; index++) {
+      const node = movableNodes[index];
+      const point = positions[node.id];
+      const target = targets[index];
+      point.x += forces[index].x + (target.x - point.x) * 0.025;
+      point.y += forces[index].y + (target.y - point.y) * 0.025;
+
+      const dx = point.x - center.x;
+      const dy = point.y - center.y;
+      const radius = Math.hypot(dx, dy);
+      const boundedRadius = Math.max(minimumRadius, Math.min(maximumRadius, radius));
+      if (radius > 0) {
+        point.x = center.x + dx / radius * boundedRadius;
+        point.y = center.y + dy / radius * boundedRadius;
+      }
+      point.x = Math.max(12, Math.min(548, point.x));
+      point.y = Math.max(12, Math.min(428, point.y));
+    }
+    if (largestOverlap < 0.5) break;
+  }
+}
+
+function WorkspaceGraph({ sessions, projects, profiles, agents, activity, orbAppearance, onOpenSession, onOpenProject, onOpenProfile, lighting, onResolveProject, onSendAgentResponse }: {
   sessions: SessionSummary[];
   projects: WorkspaceProject[];
   profiles: AgentProfile[];
   agents: WorkspaceAgent[];
-  activity: AgentActivity;
+  activity: HeroOrbState;
+  orbAppearance: HeroOrbAppearance;
   onOpenSession: (id: string) => void;
   onOpenProject: (id: string) => void;
   onOpenProfile: (profile: AgentProfile) => void;
@@ -3305,6 +3669,7 @@ function WorkspaceGraph({ sessions, projects, profiles, agents, activity, onOpen
       return point;
     };
     for (const node of nodes) place(node);
+    spreadGraphNodes(nodes, positions, center);
     return positions;
   }, [nodes]);
 
@@ -3326,6 +3691,12 @@ function WorkspaceGraph({ sessions, projects, profiles, agents, activity, onOpen
         </button>
       )}
     </div>
+    <Suspense fallback={null}>
+      <HeroAgentOrb
+        activity={activity}
+        appearance={orbAppearance}
+      />
+    </Suspense>
     <svg className="banner-illustration workspace-graph" viewBox="0 0 560 440" role="group" aria-label="Circular workspace graph. Conversations orbit the main agent, with projects, agents, and subagents expanding outward.">
       <defs>
         <radialGradient id="agent-glow"><stop stopColor="var(--appearance-icon)" stopOpacity=".3" /><stop offset="1" stopColor="var(--appearance-icon)" stopOpacity="0" /></radialGradient>
@@ -3351,12 +3722,9 @@ function WorkspaceGraph({ sessions, projects, profiles, agents, activity, onOpen
           className={`graph-link graph-link-${node.kind}${node.parentId === 'main' ? ' graph-link-root' : ''}${node.status === 'running' ? ' graph-link-active' : ''}`}
           d={edgePath}
         />;})}
-      {nodes.map(node => {
-        const point = node.kind === 'main' ? { x: 280, y: 220 } : points[node.id];
+      {nodes.filter(node => node.kind !== 'main').map(node => {
+        const point = points[node.id];
         if (!point) return null;
-        if (node.kind === 'main') return (
-          <HeroAgentOrb key={node.id} x={point.x} y={point.y} activity={activity} />
-        );
         const description = node.kind === 'conversation' ? 'Open conversation'
           : node.kind === 'project' ? 'Open project details'
             : node.kind === 'profile' ? 'Open agent conversation'
@@ -3424,15 +3792,12 @@ function WorkspaceGraph({ sessions, projects, profiles, agents, activity, onOpen
             onChange={event => setSendInputValue(event.target.value)}
             disabled={sendingAgentResponse}
           />
-          <button
-            type="submit"
+          <ChatSendButton
             className="hero-map-send-button"
-            aria-label="Send guidance"
-            title="Send guidance"
-            disabled={sendingAgentResponse || !sendInputValue.trim()}
-          >
-            {sendingAgentResponse ? <ActivityOrb label="Sending guidance" compact loading /> : <Send size={15} />}
-          </button>
+            label="Send guidance"
+            disabled={sendingAgentResponse}
+            onDictation={transcript => setSendInputValue(current => current.trim() ? `${current.trim()} ${transcript}` : transcript)}
+          />
           {agentResponseError && <span className="hero-map-send-error" role="alert">{agentResponseError}</span>}
         </form>
       )}
@@ -3729,9 +4094,9 @@ function WorkspaceDrawer({ openRequest, projectOpenRequest, projectToOpen, openT
         <button type="button" className="workspace-rail-button" onClick={() => { setSection(null); onOpenTasks(); }} aria-label="Open task board and scheduled jobs" title="Tasks and scheduled jobs"><Activity size={17} /></button>
         <button type="button" className={section === 'threads' ? 'workspace-rail-button rail-active' : 'workspace-rail-button'} onClick={() => setSection(current => current === 'threads' ? null : 'threads')} aria-label={`Open agent collaboration threads${unreadThreadCount ? `, ${unreadThreadCount} unread help requests` : ''}`} aria-expanded={section === 'threads'} title="Agent threads"><MessagesSquare size={17} />{unreadThreadCount > 0 && <span className="workspace-rail-unread-dot" aria-label={`${unreadThreadCount} unread help requests`} />}</button>
       </aside>
-      <section className="workspace-drawer" data-open={section !== null} aria-label={section === 'projects' ? 'Projects' : section === 'threads' ? 'Agent threads' : 'Agents'} aria-hidden={section === null} inert={section === null}>
+      <section className="workspace-drawer" data-open={section !== null} aria-label={section === 'projects' ? 'Projects' : section === 'threads' ? 'Agent spaces' : 'Agents'} aria-hidden={section === null} inert={section === null}>
         <header className="workspace-drawer-header">
-          <div><span className="eyebrow">{section === 'projects' ? 'WORKSPACES' : section === 'threads' ? 'MULTI-AGENT COLLABORATION' : 'WORKSPACE AGENTS'}</span><h2>{section === 'projects' ? 'Projects' : section === 'threads' ? 'Threads' : 'Agents'}</h2></div>
+          <div><span className="eyebrow">{section === 'projects' ? 'WORKSPACES' : section === 'threads' ? 'MULTI-AGENT COLLABORATION' : 'WORKSPACE AGENTS'}</span><h2>{section === 'projects' ? 'Projects' : section === 'threads' ? 'Spaces' : 'Agents'}</h2></div>
           <button className="icon-button small" type="button" onClick={() => setSection(null)} aria-label="Close workspace drawer"><X size={15} /></button>
         </header>
         {section === 'projects' ? (
@@ -4469,7 +4834,7 @@ function ChatView(props: {
                 <button className="button button-secondary hold-button" type="button" onClick={onStop} aria-label="Pause current turn" title="Pause"><Pause size={15} /></button>
                 <button className="send-button stop-button" type="button" onClick={onStop} aria-label="Interrupt agent" title="Interrupt"><X size={15} /></button>
               </div>
-              : <button className="send-button" type="submit" disabled={!draft.trim() || !session} aria-label="Send message" title="Send"><Send size={15} /></button>}
+              : <ChatSendButton disabled={!session} />}
           </div>
         </form>
         <div className="chat-assurance"><ShieldCheck size={13} /> Messages stay in your local Symbiote session store.</div>
@@ -4510,12 +4875,13 @@ function initialBrowserBookmarks(): BrowserBookmark[] {
   }
 }
 
-function BrowserView() {
+function BrowserView({ onAskAgent }: { onAskAgent: (prompt: string) => void }) {
   const [frame, setFrame] = useState<BrowserFrame | null>(null);
   const [address, setAddress] = useState('');
   const [bookmarks, setBookmarks] = useState<BrowserBookmark[]>(initialBrowserBookmarks);
   const [inputText, setInputText] = useState('');
   const [key, setKey] = useState('');
+  const [agentPrompt, setAgentPrompt] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const imageRef = useRef<HTMLImageElement>(null);
@@ -4720,6 +5086,21 @@ function BrowserView() {
               />
             : <div className="browser-empty">{loading ? <BrowserLoading label="Loading page" /> : <Globe size={25} />}<span>{loading ? 'Loading page…' : 'Open a website to begin browsing.'}</span><button className="button button-secondary" onClick={() => void navigateTo(undefined, DEFAULT_BROWSER_HOMEPAGE)}>Open Symbiote homepage</button></div>}
         </div>
+        <section className="browser-agent-tools" aria-label="Agent browser tools">
+          <div className="browser-agent-heading"><span><Sparkles size={14} /> Agent workspace</span><small>{frame?.url || 'Open a page to give the agent browser context'}</small></div>
+          <form onSubmit={event => {
+            event.preventDefault();
+            const instruction = agentPrompt.trim();
+            if (!instruction) return;
+            const pageContext = frame?.url ? `Current browser page: ${frame.title || frame.url} (${frame.url}). ` : '';
+            onAskAgent(`${pageContext}${instruction}`);
+            setAgentPrompt('');
+          }}>
+            <label className="sr-only" htmlFor="browser-agent-prompt">Ask the agent to work with this browser page</label>
+            <input id="browser-agent-prompt" value={agentPrompt} onChange={event => setAgentPrompt(event.target.value)} placeholder="Ask your agent to inspect or act on this page…" maxLength={8_000} />
+            <button className="button button-primary" type="submit" disabled={!agentPrompt.trim()}><Sparkles size={13} /> Draft for chat</button>
+          </form>
+        </section>
         <div className="browser-controls">
           <form onSubmit={event => { event.preventDefault(); if (inputText) { void act('type', { text: inputText }); setInputText(''); } }}>
             <label className="sr-only" htmlFor="browser-keyboard-input">Type into the browser</label>

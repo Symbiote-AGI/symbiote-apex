@@ -10,13 +10,15 @@ import type { ToolDefinition } from '../types.js';
 // VDB index + recent query hooks — set by daemon to avoid circular imports
 let _vdbIndex: ((text: string, source: string) => boolean | void) | null = null;
 let _vdbRecent: ((source: string, k: number) => Array<{ text: string; timestamp: number }>) | null = null;
-let _vdbSearch: ((query: string, k: number, namespace: string) => Array<{ text: string; timestamp: number; score: number }>) | null = null;
+type CombSearchResult = { text: string; timestamp: number; score: number };
+type CombSearch = (query: string, k: number, namespace: string) => CombSearchResult[] | Promise<CombSearchResult[]>;
+let _vdbSearch: CombSearch | null = null;
 let _memoryOffload: ((summary: string, sessionId: string, source: string) => { id: string; shardHash: string; duplicate: boolean }) | null = null;
 
 export function setCombVdbHook(
   indexFn: (text: string, source: string) => boolean | void,
   recentFn?: (source: string, k: number) => Array<{ text: string; timestamp: number }>,
-  searchFn?: (query: string, k: number, namespace: string) => Array<{ text: string; timestamp: number; score: number }>,
+  searchFn?: CombSearch,
 ): void {
   _vdbIndex = indexFn;
   _vdbRecent = recentFn ?? null;
@@ -40,9 +42,9 @@ function stage(text: string, source = 'comb'): boolean {
 
 // ── Recall (query VDB for recent comb entries) ───────────────────────────
 
-function recall(query?: string, k = 12): string {
+async function recall(query?: string, k = 12): Promise<string> {
   if (query?.trim() && _vdbSearch) {
-    const entries = _vdbSearch(query.trim(), k, 'memograph:symbiote_live:live:agent:symbiote');
+    const entries = await _vdbSearch(query.trim(), k, 'memograph:symbiote_live:live:agent:symbiote');
     if (entries.length === 0) return `=== COMB RECALL ===\n\nNo relevant durable memories found for: ${query.trim()}`;
     return [
       '=== COMB RECALL — Similarity-matched durable memories ===',
@@ -122,7 +124,7 @@ export const combRecallTool: ToolDefinition = {
   },
   async execute(input) {
     try {
-      return recall(input.query ? String(input.query) : undefined, Number(input.k ?? 12));
+      return await recall(input.query ? String(input.query) : undefined, Number(input.k ?? 12));
     } catch (err) {
       return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
     }

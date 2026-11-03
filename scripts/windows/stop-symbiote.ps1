@@ -1,7 +1,8 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
   [Parameter(Mandatory = $true)][string]$Root,
-  [int]$ExcludeProcessId = 0
+  [int]$ExcludeProcessId = 0,
+  [switch]$ExcludeGateway
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,63 +18,45 @@ function Test-CommandBelongsToWorkspace {
     -or $CommandLine.IndexOf($unixRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0
 }
 
-$all = @(Get-CimInstance Win32_Process)
-$byId = @{}
-foreach ($item in $all) { $byId[[int]$item.ProcessId] = $item }
-
 $roots = @()
-foreach ($item in $all) {
+foreach ($item in @(
+  Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'"
+  Get-CimInstance Win32_Process -Filter "Name = 'node.exe'"
+)) {
   if ($item.Name -ieq 'electron.exe' -and $item.CommandLine -match 'desktop[\\/]+main\.cjs') {
     if (Test-CommandBelongsToWorkspace $item.CommandLine) { $roots += $item }
     continue
   }
 
-  if ($item.Name -ine 'node.exe' -or $item.CommandLine -notmatch 'dist[\\/]+gateway[\\/]+daemon\.js') {
-    continue
-  }
-
-  $ancestor = $item
-  while ($ancestor) {
-    if (Test-CommandBelongsToWorkspace $ancestor.CommandLine) {
-      $roots += $item
-      break
-    }
-    $parentId = [int]$ancestor.ParentProcessId
-    if ($parentId -eq 0 -or -not $byId.ContainsKey($parentId)) { break }
-    $ancestor = $byId[$parentId]
-  }
-}
-
-$processRecords = @(
-  (Join-Path $root '.session\gateway-instance.lock'),
-  (Join-Path $root '.session\desktop-gateway-process.json')
-)
-foreach ($recordPath in $processRecords) {
-  if (-not (Test-Path -LiteralPath $recordPath)) { continue }
-  try {
-    $record = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json -ErrorAction Stop
-    $recordPid = 0
-    if ([int]::TryParse([string]$record.pid, [ref]$recordPid)) {
-      $recordedProcess = $byId[$recordPid]
-      if ($recordedProcess -and $recordedProcess.Name -ieq 'node.exe' -and $recordedProcess.CommandLine -match 'dist[\\/]+gateway[\\/]+daemon\.js') {
-        $roots += $recordedProcess
-      }
-    }
-  } catch {
-    Write-Warning "Could not read Symbiote process record $recordPath`: $($_.Exception.Message)"
+  if (-not $ExcludeGateway -and $item.Name -ieq 'node.exe' -and $item.CommandLine -match 'dist[\\/]+gateway[\\/]+daemon\.js' -and (Test-CommandBelongsToWorkspace $item.CommandLine)) {
+    $roots += $item
   }
 }
 
 $ids = [System.Collections.Generic.HashSet[int]]::new()
-foreach ($item in $roots) { [void]$ids.Add([int]$item.ProcessId) }
-do {
-  $added = $false
-  foreach ($item in $all) {
-    if ($ids.Contains([int]$item.ParentProcessId) -and $ids.Add([int]$item.ProcessId)) {
-      $added = $true
+$pending = [System.Collections.Generic.Queue[int]]::new()
+$electronPaths = @{}
+foreach ($item in $roots) {
+  $processId = [int]$item.ProcessId
+  if (-not $ids.Add($processId)) { continue }
+  if ($item.Name -ieq 'electron.exe' -and $item.ExecutablePath) {
+    $electronPaths[$processId] = $item.ExecutablePath
+    $pending.Enqueue($processId)
+  }
+}
+while ($pending.Count -gt 0) {
+  $parentId = $pending.Dequeue()
+  foreach ($item in @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $parentId")) {
+    if ($item.Name -ine 'electron.exe' -or -not $item.ExecutablePath -or $item.ExecutablePath -ine $electronPaths[$parentId]) {
+      continue
+    }
+    $processId = [int]$item.ProcessId
+    if ($ids.Add($processId)) {
+      $electronPaths[$processId] = $item.ExecutablePath
+      $pending.Enqueue($processId)
     }
   }
-} while ($added)
+}
 
 if ($ExcludeProcessId -gt 0) {
   [void]$ids.Remove($ExcludeProcessId)
@@ -94,14 +77,12 @@ foreach ($processId in $ids) {
   }
 }
 
-$deadline = [DateTime]::UtcNow.AddSeconds(10)
+$deadline = [DateTime]::UtcNow.AddSeconds(30)
 while ($true) {
-  $remaining = @(Get-CimInstance Win32_Process | Where-Object {
-    $ids.Contains([int]$_.ProcessId)
-  })
+  $remaining = if ($ids.Count -gt 0) { @(Get-Process -Id @($ids) -ErrorAction SilentlyContinue) } else { @() }
   if ($remaining.Count -eq 0) { break }
   if ([DateTime]::UtcNow -ge $deadline) {
-    throw "Symbiote processes did not exit within ten seconds: $(($remaining.ProcessId) -join ', ')."
+    throw "Symbiote processes did not exit within thirty seconds: $(($remaining.Id) -join ', ')."
   }
   Start-Sleep -Milliseconds 500
 }

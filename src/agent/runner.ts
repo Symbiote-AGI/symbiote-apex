@@ -2,6 +2,7 @@
 // The heart: prompt → LLM → tool calls → loop → response
 
 import { DEFAULT_LLM_REQUEST_TIMEOUT_MS, type Message, type ToolCall, type StreamEvent, type Provider, type ProviderConfig, type ToolDef } from '../providers/types.js';
+import { loadRestartState, saveRestartState } from './restart_state.js';
 import { truncateContext } from './context.js';
 import { ContextMonitor } from './context-monitor.js';
 import type { PolicyEngine } from '../tools/policy.js';
@@ -37,7 +38,13 @@ export interface ToolExecutor {
   toProviderFormat(): ToolDef[];
   execute(name: string, input: Record<string, unknown>, options?: ToolExecuteOptions): Promise<string>;
   executeWithImages?(name: string, input: Record<string, unknown>, options?: ToolExecuteOptions): Promise<ToolExecutionOutput>;
-  list(): Array<{ name: string; description: string; parameters: any; idempotency?: { class: IdempotencyClass } }>;
+  list(): Array<{
+    name: string;
+    description: string;
+    parameters: any;
+    connectorId?: string;
+    idempotency?: { class: IdempotencyClass };
+  }>;
 }
 
 export interface RunnerConfig {
@@ -398,7 +405,9 @@ export async function runAgent(
 
     // Retrieve long-term memories into the request context without persisting them in the transcript.
     const requestMessages = [...currentMessages];
-    const retrievedMemory = config.contextStore?.retrieve(currentMessages);
+    const retrievedMemory = config.contextStore
+      ? await config.contextStore.retrieveAsync(currentMessages)
+      : null;
     if (retrievedMemory) requestMessages.push(retrievedMemory);
 
     // Truncate context if needed and preserve discarded conversation text in the VDB.
@@ -406,7 +415,7 @@ export async function runAgent(
     if (config.contextStore) {
       const retained = new Set(truncated);
       const dropped = requestMessages.filter(message => !retained.has(message));
-      if (dropped.length > 0) config.contextStore.absorb(dropped);
+      if (dropped.length > 0) await config.contextStore.absorbAsync(dropped);
     }
 
     // Adaptive Temperature Modulation (ATM): classify task and adjust temperature

@@ -25,8 +25,10 @@ import {
   ButtonBuilder,
   ButtonStyle,
   SlashCommandBuilder,
+  type AutocompleteInteraction,
   type ChatInputCommandInteraction,
   type ApplicationCommandDataResolvable,
+  type StringSelectMenuInteraction,
 } from 'discord.js';
 import { BaseAdapter, TokenBucketLimiter } from '../adapter.js';
 import { formatForChannel } from '../formatter.js';
@@ -81,6 +83,7 @@ export interface DiscordSlashCommandOption {
   name: string;
   description: string;
   required?: boolean;
+  autocomplete?: boolean;
 }
 
 export interface DiscordSlashCommandDefinition {
@@ -89,7 +92,8 @@ export interface DiscordSlashCommandDefinition {
   options?: DiscordSlashCommandOption[];
 }
 
-type DiscordSlashCommandHandler = (interaction: ChatInputCommandInteraction) => Promise<void>;
+export type DiscordSlashInteraction = ChatInputCommandInteraction | AutocompleteInteraction | StringSelectMenuInteraction;
+type DiscordSlashCommandHandler = (interaction: DiscordSlashInteraction) => Promise<void>;
 
 // ─── Adapter ───────────────────────────────────────────────────────────────
 
@@ -166,7 +170,9 @@ export class DiscordAdapter extends BaseAdapter {
       this.handleDelete(msg as DiscordMessage);
     });
     this.client.on(Events.InteractionCreate, (interaction) => {
-      if (!interaction.isChatInputCommand() || !this.slashCommandHandler) return;
+      if ((!interaction.isChatInputCommand() && !interaction.isAutocomplete() && !interaction.isStringSelectMenu())
+        || !this.slashCommandHandler) return;
+      if (interaction.isStringSelectMenu() && !interaction.customId.startsWith('symbiote:')) return;
       void this.handleSlashCommand(interaction);
     });
 
@@ -210,10 +216,14 @@ export class DiscordAdapter extends BaseAdapter {
         .setName(definition.name)
         .setDescription(definition.description);
       for (const option of definition.options ?? []) {
-        command.addStringOption((builder) => builder
-          .setName(option.name)
-          .setDescription(option.description)
-          .setRequired(option.required ?? false));
+        command.addStringOption((builder) => {
+          builder
+            .setName(option.name)
+            .setDescription(option.description)
+            .setRequired(option.required ?? false);
+          if (option.autocomplete) builder.setAutocomplete(true);
+          return builder;
+        });
       }
       return command.toJSON();
     });
@@ -266,11 +276,18 @@ export class DiscordAdapter extends BaseAdapter {
     console.log(`[${this.id}] Registered ${payload.length} slash commands (${label})`);
   }
 
-  private async handleSlashCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  private async handleSlashCommand(interaction: DiscordSlashInteraction): Promise<void> {
     try {
       await this.slashCommandHandler!(interaction);
     } catch (err) {
-      console.error(`[${this.id}] Slash command /${interaction.commandName} failed:`, err);
+      const commandName = interaction.isStringSelectMenu() ? interaction.customId : interaction.commandName;
+      console.error(`[${this.id}] Slash command interaction "${commandName}" failed:`, err);
+      if (interaction.isAutocomplete()) {
+        await interaction.respond([]).catch((replyErr) => {
+          console.error(`[${this.id}] Could not complete autocomplete interaction:`, replyErr);
+        });
+        return;
+      }
       const message = `Command failed: ${err instanceof Error ? err.message : String(err)}`;
       if (interaction.deferred || interaction.replied) {
         await interaction.followUp({ content: message, ephemeral: true }).catch((replyErr) => {

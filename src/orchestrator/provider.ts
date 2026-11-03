@@ -17,6 +17,7 @@ import { gladiusProvider } from '../providers/gladius.js';
 import { groqProvider } from '../providers/groq.js';
 import { ollamaProvider } from '../providers/ollama.js';
 import { xaiProvider } from '../providers/xai.js';
+import { freeaiProvider } from '../providers/freeai.js';
 
 let orchestratorInstance: DualLLMOrchestrator | null = null;
 
@@ -136,6 +137,8 @@ function getProviderByName(name: string): Provider {
       return ollamaProvider;
     case 'xai':
       return xaiProvider;
+    case 'freeai':
+      return freeaiProvider;
     default:
       throw new Error(`Unknown provider: ${name}. Available: openrouter, anthropic, openai, github-copilot, vscode-proxy, gemini, gladius, groq, ollama, xai`);
   }

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { ToolDefinition } from '../types.js';
 import { isWindows, resolveLocalPath } from '../../runtime/platform.js';
+import { synthesizeWindowsSpeech } from '../../voice/speech-service.js';
 
 const TTS_OUTPUT_DIR = path.join(os.tmpdir(), 'symbiote-tts');
 
@@ -66,8 +67,23 @@ async function edgeTTS(text: string, voice: string, speed: number, filepath: str
       stdio: 'pipe',
     });
     return fs.existsSync(filepath) && fs.statSync(filepath).size > 0;
-  } catch {
+  } catch (failure) {
+    console.warn(`[tts] Edge TTS failed: ${failure instanceof Error ? failure.message : String(failure)}`);
     return false;
+  }
+}
+
+function createOgg(filepath: string): string | undefined {
+  const oggPath = filepath.replace(/\.[^.]+$/, '.ogg');
+  try {
+    execFileSync('ffmpeg', ['-nostdin', '-y', '-i', filepath, '-codec:a', 'libopus', '-b:a', '64k', oggPath], {
+      stdio: 'pipe',
+      timeout: 30_000,
+    });
+    return fs.existsSync(oggPath) ? oggPath : undefined;
+  } catch (failure) {
+    console.warn(`[tts] Optional OGG conversion failed: ${failure instanceof Error ? failure.message : String(failure)}`);
+    return undefined;
   }
 }
 
@@ -98,27 +114,26 @@ export const ttsTool: ToolDefinition = {
     const text = input.text as string;
     const voice = (input.voice as string) ?? 'nova';
     const speed = (input.speed as number) ?? 1.0;
+    if (!text?.trim() || text.length > 10_000) {
+      throw new Error('Speech text must contain between 1 and 10,000 characters.');
+    }
+    if (!Number.isFinite(speed) || speed < 0.25 || speed > 4) {
+      throw new Error('Speech speed must be between 0.25 and 4.0.');
+    }
 
-    fs.mkdirSync(TTS_OUTPUT_DIR, { recursive: true });
-const outputDir = resolveLocalPath(TTS_OUTPUT_DIR);
-  fs.mkdirSync(outputDir, { recursive: true });
-  const filename = `tts-${Date.now()}.mp3`;
-  const filepath = path.join(outputDir, filename);
+    const outputDir = resolveLocalPath(TTS_OUTPUT_DIR);
+    fs.mkdirSync(outputDir, { recursive: true });
+    const filename = `tts-${Date.now()}.mp3`;
+    const filepath = path.join(outputDir, filename);
 
     // Try edge-tts first (free)
     const ok = await edgeTTS(text, voice, speed, filepath);
     if (ok) {
-      // Also generate OGG opus (required for WhatsApp voice notes)
-      const oggPath = filepath.replace('.mp3', '.ogg');
-      try {
-        execFileSync('ffmpeg', ['-y', '-i', filepath, '-codec:a', 'libopus', '-b:a', '64k', oggPath], { stdio: 'pipe', timeout: 30_000 });
-      } catch { /* mp3 still works for non-WhatsApp */ }
-
+      const oggPath = createOgg(filepath);
       const size = fs.statSync(filepath).size;
-      const oggExists = fs.existsSync(oggPath);
       return JSON.stringify({
         path: filepath,
-        oggPath: oggExists ? oggPath : undefined,
+        oggPath,
         size,
         voice,
         engine: 'edge-tts',
@@ -126,6 +141,24 @@ const outputDir = resolveLocalPath(TTS_OUTPUT_DIR);
       });
     }
 
-    return 'Error: TTS generation failed. edge-tts may not be installed.';
+    if (isWindows()) {
+      const result = await synthesizeWindowsSpeech({
+        text,
+        voiceId: `preset:${voice}`,
+        rate: Math.max(0.6, Math.min(1.6, speed)),
+        pitch: 1,
+        volume: 1,
+        style: 'natural',
+      });
+      return JSON.stringify({
+        path: result.path,
+        oggPath: createOgg(result.path),
+        voice: result.voice,
+        engine: result.engine,
+        note: 'Windows local speech fallback; output is WAV. Use oggPath for WhatsApp voice notes when ffmpeg is available.',
+      });
+    }
+
+    throw new Error('TTS generation failed. Install edge-tts or run this tool on Windows with an installed system voice.');
   },
 };

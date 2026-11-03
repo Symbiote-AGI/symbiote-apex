@@ -83,6 +83,18 @@ export function buildConfigTemplate(input: TemplateInput = {}): Record<string, a
 
     toolProgress: true,
     tools: { enabled: true },
+    memory: {
+      neural: {
+        enabled: false,
+        provider: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'bge-m3',
+        timeoutMs: 120_000,
+        lexicalWeight: 0.4,
+        denseWeight: 0.6,
+        temporalHalfLifeDays: 180,
+      },
+    },
     sandbox: { enabled: false, ownerAccess: true, internalTier: 'standard', nonOwnerTier: 'restricted' },
     timeouts: { llmRequestMs: 900_000 },
     heartbeat: {

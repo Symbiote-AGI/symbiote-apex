@@ -15,6 +15,8 @@ interface ProjectTerminal {
   output: string;
   outputBytes: number;
   outputTruncated: boolean;
+  ready: boolean;
+  pendingInput: string;
   exitCode: number | null;
 }
 
@@ -51,10 +53,11 @@ export class ProjectTerminalManager {
       output: '',
       outputBytes: 0,
       outputTruncated: false,
+      ready: !shell.readyMarker,
+      pendingInput: '',
       exitCode: null,
     };
-    const append = (chunk: Buffer | string) => {
-      const text = chunk.toString();
+    const appendOutput = (text: string) => {
       terminal.output += text;
       terminal.outputBytes += Buffer.byteLength(text);
       while (terminal.outputBytes > MAX_BUFFER_BYTES && terminal.output.length) {
@@ -64,13 +67,67 @@ export class ProjectTerminalManager {
         terminal.outputTruncated = true;
       }
     };
-    child.stdout?.on('data', append);
-    child.stderr?.on('data', append);
+    let startupOutput = '';
+    let awaitingPrompt = false;
+    const flushPendingInput = () => {
+      terminal.ready = true;
+      const pendingInput = terminal.pendingInput;
+      terminal.pendingInput = '';
+      if (pendingInput && terminal.process.stdin?.writable) terminal.process.stdin.write(pendingInput);
+    };
+    const appendStdout = (chunk: Buffer | string) => {
+      const text = chunk.toString();
+      const readyMarker = shell.readyMarker;
+      if (!readyMarker || terminal.ready) {
+        appendOutput(text);
+        return;
+      }
+
+      if (awaitingPrompt) {
+        appendOutput(text);
+        awaitingPrompt = false;
+        flushPendingInput();
+        return;
+      }
+
+      startupOutput += text;
+      const markerIndex = startupOutput.indexOf(readyMarker);
+      if (markerIndex >= 0) {
+        appendOutput(startupOutput.slice(0, markerIndex));
+        const promptOutput = startupOutput.slice(markerIndex + readyMarker.length);
+        startupOutput = '';
+        if (promptOutput) {
+          appendOutput(promptOutput);
+          flushPendingInput();
+        } else {
+          awaitingPrompt = true;
+        }
+        return;
+      }
+
+      let markerPrefixLength = Math.min(startupOutput.length, readyMarker.length - 1);
+      while (markerPrefixLength > 0 && !readyMarker.startsWith(startupOutput.slice(-markerPrefixLength))) {
+        markerPrefixLength--;
+      }
+      const safeLength = startupOutput.length - markerPrefixLength;
+      if (safeLength > 0) {
+        appendOutput(startupOutput.slice(0, safeLength));
+        startupOutput = startupOutput.slice(safeLength);
+      }
+    };
+    child.stdout?.on('data', appendStdout);
+    child.stderr?.on('data', chunk => appendOutput(chunk.toString()));
     child.on('error', error => {
-      append(`\r\nTerminal error: ${error.message}\r\n`);
+      appendOutput(`\r\nTerminal error: ${error.message}\r\n`);
       terminal.exitCode = -1;
     });
-    child.on('close', code => { terminal.exitCode = code ?? terminal.exitCode ?? -1; });
+    child.on('exit', code => {
+      terminal.exitCode = code ?? terminal.exitCode ?? -1;
+    });
+    child.on('close', code => {
+      if (startupOutput) appendOutput(startupOutput);
+      terminal.exitCode = code ?? terminal.exitCode ?? -1;
+    });
     this.terminals.set(terminal.id, terminal);
     return { terminalId: terminal.id, pid: child.pid ?? 0 };
   }
@@ -79,6 +136,13 @@ export class ProjectTerminalManager {
     const terminal = this.get(projectId, terminalId);
     if (!input || input.length > MAX_INPUT_LENGTH) throw new Error(`Terminal input must contain 1–${MAX_INPUT_LENGTH} characters.`);
     if (terminal.exitCode !== null || !terminal.process.stdin?.writable) throw new Error('Project terminal is not running.');
+    if (!terminal.ready) {
+      if (terminal.pendingInput.length + input.length > MAX_INPUT_LENGTH) {
+        throw new Error(`Project terminal startup input cannot exceed ${MAX_INPUT_LENGTH} characters.`);
+      }
+      terminal.pendingInput += input;
+      return;
+    }
     terminal.process.stdin.write(input);
   }
 
@@ -111,10 +175,13 @@ export class ProjectTerminalManager {
     for (const [id, terminal] of this.terminals) {
       if (terminal.projectId !== projectId) continue;
       if (terminal.exitCode === null) {
-        stopping.push(this.terminate(terminal));
+        stopping.push(this.terminate(terminal).then(() => {
+          this.terminals.delete(id);
+        }));
         killed++;
+      } else {
+        this.terminals.delete(id);
       }
-      this.terminals.delete(id);
     }
     await Promise.all(stopping);
     return killed;
@@ -131,14 +198,64 @@ export class ProjectTerminalManager {
 
   private terminate(terminal: ProjectTerminal): Promise<void> {
     if (terminal.exitCode !== null) return Promise.resolve();
-    return new Promise(resolve => {
-      const timeout = setTimeout(resolve, 5_000);
+    return new Promise((resolve, reject) => {
+      let processClosed = false;
+      let killerClosed = false;
+      let killRequested = false;
+      let terminationError: Error | undefined;
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        if (error) {
+          settled = true;
+          clearTimeout(timeout);
+          reject(error);
+          return;
+        }
+        if (processClosed && killerClosed) {
+          settled = true;
+          clearTimeout(timeout);
+          resolve();
+        }
+      };
+      const timeout = setTimeout(() => {
+        finish(terminationError ?? new Error(`Project terminal ${terminal.id} (PID ${terminal.process.pid ?? 'pending'}) did not stop within 30 seconds (process exited: ${processClosed}; taskkill completed: ${killerClosed}).`));
+      }, 30_000);
       timeout.unref?.();
-      terminal.process.once('close', () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-      killProcessTree(terminal.process);
+      const markProcessClosed = () => {
+        processClosed = true;
+        if (!killRequested) killerClosed = true;
+        finish();
+      };
+      terminal.process.once('exit', markProcessClosed);
+      terminal.process.once('close', markProcessClosed);
+      const requestKill = () => {
+        if (killRequested || processClosed) return;
+        killRequested = true;
+        const killer = killProcessTree(terminal.process);
+        if (!killer) {
+          if (process.platform === 'win32' && terminal.process.exitCode === null && terminal.process.signalCode === null) {
+            terminationError = new Error(`Could not start process-tree termination for project terminal ${terminal.id}.`);
+          }
+          killerClosed = true;
+          finish();
+          return;
+        }
+        killer.once('error', error => {
+          terminationError = error;
+          killerClosed = true;
+          finish();
+        });
+        killer.once('close', code => {
+          if (code !== 0 && !processClosed) {
+            terminationError = new Error(`Could not stop project terminal ${terminal.id}; taskkill exited with ${code ?? 'unknown status'}.`);
+          }
+          killerClosed = true;
+          finish();
+        });
+      };
+      if (terminal.process.pid === undefined) terminal.process.once('spawn', requestKill);
+      else requestKill();
     });
   }
 

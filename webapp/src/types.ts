@@ -1,4 +1,4 @@
-export type ViewId = 'workspace' | 'ide' | 'runs' | 'agents' | 'projects' | 'threads' | 'chat' | 'browser' | 'memory' | 'games' | 'integrations' | 'operations' | 'tools' | 'markets' | 'intelligence' | 'settings';
+export type ViewId = 'workspace' | 'ide' | 'runs' | 'agents' | 'projects' | 'chat' | 'browser' | 'memory' | 'markets' | 'intelligence' | 'games' | 'threads' | 'integrations' | 'connectors' | 'operations' | 'tools' | 'api-registry' | 'settings';
 
 export interface MemoryGraphNode {
   id: string;
@@ -9,8 +9,6 @@ export interface MemoryGraphNode {
   role: string;
   timestamp: number;
   sessionId?: string;
-  namespace?: string;
-  metadata?: Record<string, string>;
   side: 'documents' | 'sessions' | 'projects';
 }
 
@@ -35,38 +33,22 @@ export interface MemoryGraphData {
 
 export interface MemoryDocument extends MemoryGraphNode {
   text: string;
+  namespace?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface MemoryNodeSimilarity extends MemoryGraphNode {
+  similarity: number;
 }
 
 export interface MemoryNodeContext {
-  selected: {
-    id: string;
-    label: string;
-    kind: 'system' | 'domain' | 'source' | 'document';
-    side: string;
-    source?: string;
-    storage?: string;
-    role?: string;
-    timestamp?: number;
-    sessionId?: string;
-    namespace?: string;
-    metadata?: Record<string, string>;
-    excerpt?: string;
-    text?: string;
-    documentCount?: number;
-  };
-  similarity: {
-    threshold: number;
-    count: number;
-    average: number;
-    highest: number;
-    neighbors: Array<{
-      id: string;
-      label: string;
-      source: string;
-      side: MemoryGraphNode['side'];
-      role: string;
-      similarity: number;
-    }>;
+  selected: MemoryDocument;
+  graph: {
+    nodeCount: number;
+    similarityCount: number;
+    meanSimilarity: number;
+    strongestSimilarity: number | null;
+    similarities: MemoryNodeSimilarity[];
   };
 }
 
@@ -177,7 +159,11 @@ export interface ChatMessage {
   activeTools?: string[];
   activeTool?: string;
   toolActivity?: Array<{ name: string; status: 'running' | 'done' }>;
-  todoActivity?: Array<{ id: string; title: string; status: 'pending' | 'in_progress' | 'blocked' | 'completed' }>;
+  todoActivity?: Array<{
+    id: string;
+    title: string;
+    status: 'pending' | 'in_progress' | 'blocked' | 'completed';
+  }>;
   thinking?: boolean;
   activityState?: string;
   interrupted?: boolean;
@@ -217,9 +203,39 @@ export interface HostResourceSnapshot {
   warnings: string[];
 }
 
+export interface HealthTelemetryEvent {
+  timestamp: number;
+  type: 'gateway.started' | 'gateway.heartbeat' | 'gateway.stopped' | 'gateway.outage' | 'gateway.issue' | 'provider.call';
+  subsystem?: string;
+  provider?: string;
+  succeeded?: boolean;
+  latencyMs?: number;
+  message?: string;
+  outageStartedAt?: number;
+}
+
+export interface HealthTelemetrySnapshot {
+  generatedAt: number;
+  windowMs: number;
+  gateway: {
+    score: number;
+    trackedMs: number;
+    uptimeMs: number;
+    downtimeMs: number;
+    issueCount: number;
+    lastIncidentAt?: number;
+  };
+  providers: {
+    score: number | null;
+    calls: number;
+    failures: number;
+    byProvider: Record<string, { calls: number; failures: number }>;
+  };
+  recentEvents: HealthTelemetryEvent[];
+}
+
 export interface GatewayStatus {
   version?: string;
-  sampledAt?: number;
   update?: {
     state: 'unknown' | 'current' | 'available' | 'error';
     currentVersion: string;
@@ -240,6 +256,7 @@ export interface GatewayStatus {
   };
   uptime?: number;
   uptimeHuman?: string;
+  sampledAt?: number;
   provider?: string;
   channels: ChannelStatus[];
   whatsappQr?: { value: string; updatedAt: number };
@@ -247,32 +264,15 @@ export interface GatewayStatus {
   sessions?: number;
   tools?: number;
   providerHealth?: Record<string, unknown> | unknown[];
-  healthTelemetry?: {
-    generatedAt: number;
-    windowMs: number;
-    gateway: {
-      score: number;
-      trackedMs: number;
-      uptimeMs: number;
-      downtimeMs: number;
-      issueCount: number;
-      lastIncidentAt?: number;
-    };
-    providers: {
-      score: number | null;
-      calls: number;
-      failures: number;
-      byProvider: Record<string, { calls: number; failures: number }>;
-    };
-    recentEvents: Array<{
-      timestamp: number;
-      type: string;
-      subsystem?: string;
-      provider?: string;
-      succeeded?: boolean;
-      latencyMs?: number;
-      message?: string;
-      outageStartedAt?: number;
+  healthTelemetry?: HealthTelemetrySnapshot;
+  startup?: {
+    manager: 'gamma-bootstrap';
+    state: 'pending' | 'loading' | 'ready' | 'degraded';
+    tasks: Record<string, {
+      state: 'pending' | 'running' | 'ready' | 'error';
+      startedAt?: number;
+      completedAt?: number;
+      error?: string;
     }>;
   };
   metrics?: {

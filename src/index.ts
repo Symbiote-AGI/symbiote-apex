@@ -23,6 +23,7 @@ import { groqProvider } from './providers/groq.js';
 import { nvidiaProvider } from './providers/nvidia.js';
 import { ollamaProvider } from './providers/ollama.js';
 import { xaiProvider } from './providers/xai.js';
+import { freeaiProvider } from './providers/freeai.js';
 import type { Provider, ProviderConfig } from './providers/types.js';
 import { ToolRegistry } from './tools/registry.js';
 import type { ToolDefinition } from './tools/types.js';
@@ -47,6 +48,7 @@ import { DEFAULT_MAX_CONTEXT_TOKENS, formatTodoProgressUpdate, runAgent } from '
 import { DEFAULT_LLM_REQUEST_TIMEOUT_MS } from './providers/types.js';
 import { ContextStore } from './agent/context-store.js';
 import { getSharedVectorDB } from './memory/vdb.js';
+import { createNeuralMemoryEngine, registerSharedNeuralMemory } from './memory/neural-memory.js';
 import { importMemoGraphSnapshots, resolveMemoGraphStorageDir } from './memory/memograph.js';
 import { DurableMemory, resolveDurableMemoryArchive } from './memory/durable-memory.js';
 import { importSkillFiles, resolveSkillsDir } from './memory/skills.js';
@@ -75,6 +77,7 @@ const providers = new Map<string, Provider>([
   ['nvidia', nvidiaProvider],
   ['ollama', ollamaProvider],
   ['xai', xaiProvider],
+  ['freeai', freeaiProvider],
 ]);
 
 // ─── Main ───
@@ -132,6 +135,25 @@ async function main() {
     resolveSkillsDir(config.workspace),
   );
   const workspaceVdb = getSharedVectorDB(config.workspace);
+  let neuralMemory: ReturnType<typeof createNeuralMemoryEngine>;
+  try {
+    neuralMemory = createNeuralMemoryEngine(workspaceVdb, config.workspace, config.memory?.neural);
+    registerSharedNeuralMemory(config.workspace, neuralMemory);
+    if (neuralMemory) {
+      const status = await neuralMemory.initialize();
+      const detail = status.state === 'degraded' ? ` — ${status.lastError ?? 'embedding provider unavailable'}` : '';
+      console.log(`[memory] Neural memory ${status.state}: ${status.indexedDocuments}/${status.corpusDocuments} vectors using ${status.model}${detail}`);
+      void neuralMemory.indexMissing(64).then(indexed => {
+        if (indexed > 0) console.log(`[memory] Neural backfill indexed ${indexed} documents.`);
+      }).catch(error => {
+        console.error(`[memory] Initial dense backfill failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+  } catch (error) {
+    neuralMemory = undefined;
+    registerSharedNeuralMemory(config.workspace, undefined);
+    console.error(`[memory] Neural memory could not initialize; lexical VDB remains available: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const durableMemory = new DurableMemory(
     workspaceVdb,
     resolveDurableMemoryArchive(config.workspace),
@@ -142,7 +164,10 @@ async function main() {
       return workspaceVdb.index({ id: '', text, source, role: 'context', timestamp: Date.now(), sessionId });
     },
     (source, count) => workspaceVdb.recent(source, count),
-    (query, count, namespace) => workspaceVdb.search(query, count, { namespace }),
+    async (query, count, namespace) =>
+      neuralMemory
+        ? await neuralMemory.search(query, count, { namespace })
+        : workspaceVdb.search(query, count, { namespace }),
   );
   setMemoryOffloadHook((summary, memorySessionId, source) => durableMemory.offload(summary, memorySessionId, source));
   if (memoryBootstrap.indexed > 0) {
@@ -173,7 +198,7 @@ async function main() {
     channel: 'cli',
     chatType: 'direct',
   });
-  const contextStore = new ContextStore(getSharedVectorDB(config.workspace), { sessionId });
+  const contextStore = new ContextStore(getSharedVectorDB(config.workspace), { sessionId }, neuralMemory);
   contextStore.ingestBoot(readBootKnowledge(config.workspace));
 
   if (session.messages.length === 0 || session.messages[0].role !== 'system') {

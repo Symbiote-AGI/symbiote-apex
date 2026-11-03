@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import http from 'node:http';
 import { createRequire } from 'node:module';
+import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ if (Number(process.versions.node.split('.')[0]) < 20) {
   throw new Error(`Node.js 20 or newer is required to start Symbiote; found ${process.versions.node}.`);
 }
 const entry = path.join(root, 'dist', 'index.js');
+const gatewayEntry = path.join(root, 'dist', 'gateway', 'daemon.js');
 const desktopMain = path.join(root, 'desktop', 'main.cjs');
 const buildFingerprintPath = path.join(root, 'dist', '.symbiote-build-fingerprint');
 const sourceDirectories = [
@@ -72,11 +73,11 @@ function hasBuildOutputs() {
   return requiredFiles.every(file => fs.existsSync(file));
 }
 
-function stopPreviousInstances() {
+function stopPreviousInstances(excludeGateway = false) {
   if (process.platform !== 'win32') return;
 
   const script = path.join(root, 'scripts', 'windows', 'stop-symbiote.ps1');
-  const result = spawnSync('powershell.exe', [
+  const args = [
     '-NoProfile',
     '-NonInteractive',
     '-ExecutionPolicy',
@@ -85,7 +86,9 @@ function stopPreviousInstances() {
     script,
     '-Root',
     root,
-  ], {
+  ];
+  if (excludeGateway) args.push('-ExcludeGateway');
+  const result = spawnSync('powershell.exe', args, {
     cwd: root,
     stdio: 'inherit',
   });
@@ -93,65 +96,121 @@ function stopPreviousInstances() {
   if (result.status !== 0) throw new Error('Could not stop all previous Symbiote desktop and Gateway processes.');
 }
 
-function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function checkGateway(port) {
-  return new Promise((resolve, reject) => {
-    const request = http.get({
-      hostname: '127.0.0.1',
-      port,
-      path: '/api/status',
-      timeout: 2000,
-    }, response => {
-      const chunks = [];
-      response.on('data', chunk => chunks.push(Buffer.from(chunk)));
-      response.once('end', () => {
-        if (response.statusCode !== 200) return resolve(null);
-        try {
-          resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-        } catch {
-          resolve(null);
-        }
-      });
-    });
-    request.once('timeout', () => request.destroy(new Error('Gateway readiness request timed out.')));
-    request.once('error', () => resolve(null));
+function hasInstalledGatewayService() {
+  if (process.platform !== 'win32') return false;
+  const result = spawnSync('sc.exe', ['query', 'SymbioteGateway'], {
+    encoding: 'utf8',
+    windowsHide: true,
   });
+  if (result.error) throw result.error;
+  if (/SERVICE_NAME:\s*SymbioteGateway/i.test(`${result.stdout ?? ''}\n${result.stderr ?? ''}`)) return true;
+  if (result.status !== 0 && !/1060|does not exist as an installed service/i.test(`${result.stdout ?? ''}\n${result.stderr ?? ''}`)) {
+    throw new Error(`Could not inspect the SymbioteGateway service: ${result.stderr || result.stdout || result.status}`);
+  }
+  return false;
 }
 
-function readGatewayProcessRecord(recordPath) {
+function getGatewayHealthTarget(configPath) {
+  let config = {};
+  if (fs.existsSync(configPath)) {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  }
+  const port = Number(config.webPort ?? 3009);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid Gateway web port in ${configPath}: ${config.webPort}`);
+  }
+  const configuredHost = process.env.SYMBIOTE_WEB_HOST || config.webHost;
+  const hosts = [];
+  if (configuredHost && !['0.0.0.0', '::', '::0'].includes(configuredHost)) hosts.push(configuredHost);
+  hosts.push('127.0.0.1');
+
+  const workspace = path.resolve(path.dirname(configPath), config.workspace || '.');
+  const tailscaleSettingsPath = path.join(workspace, '.session', 'tailscale-access.json');
   try {
-    return JSON.parse(fs.readFileSync(recordPath, 'utf8'));
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
-async function waitForGateway(port, child, recordPath, configPath, daemonPath) {
-  const deadline = Date.now() + 5 * 60_000;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(`The Symbiote desktop exited before the Gateway became healthy (exit ${child.exitCode}).`);
-    }
-    const status = await checkGateway(port);
-    if (status) {
-      const record = readGatewayProcessRecord(recordPath);
-      if (!record || status.pid !== record.pid
-        || path.resolve(record.configPath) !== configPath
-        || path.resolve(record.daemonPath) !== daemonPath) {
-        throw new Error(`Port ${port} returned HTTP 200, but it is not served by this launch's Gateway child.`);
+    const settings = JSON.parse(fs.readFileSync(tailscaleSettingsPath, 'utf8'));
+    if (settings?.version === 1 && settings.enabled === true) {
+      const executables = [
+        'tailscale.exe',
+        path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe'),
+      ];
+      for (const executable of executables) {
+        const result = spawnSync(executable, ['status', '--json'], {
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 3_000,
+          maxBuffer: 128 * 1024,
+        });
+        if (result.error?.code === 'ENOENT') continue;
+        if (result.error) throw result.error;
+        if (result.status === 0) {
+          const status = JSON.parse(result.stdout);
+          const address = status.Self?.TailscaleIPs?.find(value => /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(value));
+          if (address) hosts.unshift(address);
+        }
+        break;
       }
-      return;
     }
-    await wait(1000);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
   }
-  throw new Error(`The Gateway did not return HTTP 200 from /api/status on port ${port} within five minutes.`);
+
+  const urls = [...new Set(hosts)].map(host => {
+    const formattedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+    return `http://${formattedHost}:${port}/api/status`;
+  });
+  let accessToken = process.env.SYMBIOTE_WEB_TOKEN?.trim() ?? '';
+  if (!accessToken) {
+    try {
+      const dotenv = createRequire(import.meta.url)('dotenv');
+      accessToken = dotenv.parse(fs.readFileSync(path.join(path.dirname(configPath), '.env'), 'utf8')).SYMBIOTE_WEB_TOKEN?.trim() ?? '';
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw new Error(`Could not read the Gateway environment file: ${error.message}`);
+    }
+  }
+  return {
+    urls,
+    tokenPath: path.join(workspace, '.session', 'web-access-token'),
+    accessToken,
+  };
 }
 
-stopPreviousInstances();
+async function waitForGateway(child, healthTarget) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`Gateway exited before becoming ready (code ${child.exitCode}).`);
+    let accessToken = healthTarget.accessToken;
+    if (!accessToken) {
+      try {
+        accessToken = fs.readFileSync(healthTarget.tokenPath, 'utf8').trim();
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+    }
+    for (const healthUrl of healthTarget.urls) {
+      try {
+        const response = await fetch(healthUrl, {
+          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+          signal: AbortSignal.timeout(1_000),
+        });
+        if (response.ok) {
+          const status = await response.json();
+          if (status.pid === child.pid && status.startup?.state !== 'pending') return;
+        } else {
+          await response.arrayBuffer();
+        }
+      } catch (error) {
+        if (error.name !== 'AbortError' && error.name !== 'TimeoutError' && error.cause?.code !== 'ECONNREFUSED') {
+          throw error;
+        }
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error(`Gateway did not become ready at ${healthTarget.urls.join(' or ')} within 30 seconds.`);
+}
+
+const installedGatewayService = hasInstalledGatewayService();
+stopPreviousInstances(installedGatewayService);
 
 const hasBuildSource = fs.existsSync(path.join(root, 'src', 'gateway', 'daemon.ts'))
   && fs.existsSync(path.join(root, 'tsconfig.json'));
@@ -183,20 +242,57 @@ if (buildRequired && hasBuildSource) {
 const launchLog = path.join(root, '.session', 'desktop-launch.log');
 fs.mkdirSync(path.dirname(launchLog), { recursive: true });
 const logFd = fs.openSync(launchLog, 'w');
-const configPath = path.join(root, 'symbiote.json');
-const daemonPath = path.join(root, 'dist', 'gateway', 'daemon.js');
+const configPath = path.resolve(process.env.SYMBIOTE_CONFIG || path.join(root, 'symbiote.json'));
 const gatewayProcessPath = path.join(root, '.session', 'desktop-gateway-process.json');
 fs.rmSync(gatewayProcessPath, { force: true });
-const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-const gatewayPort = Number(config.webPort ?? 3009);
-if (!Number.isInteger(gatewayPort) || gatewayPort < 1 || gatewayPort > 65535) {
-  fs.closeSync(logFd);
-  throw new Error(`Invalid Gateway webPort in ${configPath}: ${config.webPort}`);
-}
 
 const electronExecutable = createRequire(import.meta.url)('electron');
+let gatewayChild;
 let child;
 try {
+  if (!installedGatewayService) {
+    const gatewayLogFd = fs.openSync(path.join(root, '.session', 'gateway.log'), 'a');
+    try {
+      gatewayChild = spawn(process.execPath, [gatewayEntry, `--config=${configPath}`], {
+        cwd: root,
+        detached: true,
+        windowsHide: true,
+        stdio: ['ignore', gatewayLogFd, gatewayLogFd],
+        env: {
+          ...process.env,
+          SYMBIOTE_CONFIG: configPath,
+        },
+      });
+      await new Promise((resolve, reject) => {
+        gatewayChild.once('error', reject);
+        gatewayChild.once('spawn', resolve);
+      });
+      gatewayChild.on('error', error => console.error('The prestarted Symbiote Gateway reported an error:', error));
+      const temporaryPath = `${gatewayProcessPath}.${process.pid}.tmp`;
+      fs.writeFileSync(temporaryPath, JSON.stringify({
+        pid: gatewayChild.pid,
+        daemonPath: gatewayEntry,
+        configPath,
+        owner: 'launcher',
+      }), { encoding: 'utf8', mode: 0o600 });
+      fs.renameSync(temporaryPath, gatewayProcessPath);
+      await waitForGateway(gatewayChild, getGatewayHealthTarget(configPath));
+      gatewayChild.unref();
+      console.log(`Symbiote Gateway ready (PID ${gatewayChild.pid}); starting the optional desktop.`);
+    } catch (error) {
+      if (gatewayChild && gatewayChild.exitCode === null) gatewayChild.kill('SIGTERM');
+      try {
+        const record = JSON.parse(fs.readFileSync(gatewayProcessPath, 'utf8'));
+        if (record.pid === gatewayChild?.pid) fs.rmSync(gatewayProcessPath, { force: true });
+      } catch (recordError) {
+        if (recordError.code !== 'ENOENT') throw recordError;
+      }
+      throw error;
+    } finally {
+      fs.closeSync(gatewayLogFd);
+    }
+  }
+
   child = spawn(electronExecutable, [desktopMain], {
     cwd: root,
     detached: true,
@@ -213,16 +309,8 @@ try {
     child.once('error', reject);
     child.once('spawn', resolve);
   });
-  await waitForGateway(gatewayPort, child, gatewayProcessPath, configPath, daemonPath);
   child.unref();
-} catch (error) {
-  try {
-    stopPreviousInstances();
-  } catch (cleanupError) {
-    error.message += ` Cleanup also failed: ${cleanupError.message}`;
-  }
-  throw error;
 } finally {
   fs.closeSync(logFd);
 }
-console.log(`Symbiote is ready: desktop PID ${child.pid}, Gateway HTTP 200 on port ${gatewayPort}. Diagnostics: ${path.relative(root, launchLog)}`);
+console.log(`Symbiote desktop launched (PID ${child.pid}). Gateway startup is monitored by the desktop. Diagnostics: ${path.relative(root, launchLog)}`);

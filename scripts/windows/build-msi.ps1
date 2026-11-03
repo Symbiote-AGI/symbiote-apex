@@ -2,6 +2,7 @@ param(
   [string]$OutputDirectory = '',
   [string]$WixDirectory = '',
   [string]$DependencyCacheDirectory = '',
+  [string]$ElectronDistributionDirectory = '',
   [switch]$SkipBuild
 )
 
@@ -87,6 +88,7 @@ try {
     'desktop',
     'package.json',
     'package-lock.json',
+    'requirements-mt5.txt',
     'symbiote.example.json',
     'symbiote.schema.json',
     'README.md',
@@ -101,13 +103,37 @@ try {
     Copy-Item -LiteralPath $sourcePath -Destination $appSource -Recurse -Force
   }
 
+  $workerDirectory = Join-Path $appSource 'scripts'
+  New-Item -ItemType Directory -Path $workerDirectory -Force | Out-Null
+  Copy-Item -LiteralPath (Join-Path $repositoryRoot 'scripts\mt5-worker.py') -Destination $workerDirectory
+
+  $voiceHelperDirectory = Join-Path $workerDirectory 'voice'
+  New-Item -ItemType Directory -Path $voiceHelperDirectory -Force | Out-Null
+  Copy-Item -LiteralPath (Join-Path $repositoryRoot 'scripts\voice\windows-speech.ps1') -Destination $voiceHelperDirectory
+
   $installerWebDirectory = Join-Path $appSource 'dist\web'
   New-Item -ItemType Directory -Path $installerWebDirectory -Force | Out-Null
   Copy-Item -LiteralPath (Join-Path $repositoryRoot 'web\installer.html') -Destination $installerWebDirectory
 
-  $electronDistribution = Join-Path $repositoryRoot 'node_modules\electron\dist'
+  if ($ElectronDistributionDirectory) {
+    $electronDistribution = (Resolve-Path -LiteralPath $ElectronDistributionDirectory).Path
+  }
+  else {
+    $electronDistribution = Join-Path $repositoryRoot 'node_modules\electron\dist'
+  }
   if (-not (Test-Path -LiteralPath (Join-Path $electronDistribution 'electron.exe') -PathType Leaf)) {
     throw "Electron runtime is missing. Run npm install before building the MSI: $electronDistribution"
+  }
+  $electronPackagePath = Join-Path (Split-Path -Parent $electronDistribution) 'package.json'
+  $packageLockPath = Join-Path $repositoryRoot 'package-lock.json'
+  $electronVersion = (Get-Content -LiteralPath $electronPackagePath -Raw | ConvertFrom-Json).version
+  $lockedElectronVersion = & node -e "const fs = require('node:fs'); const lock = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const electron = lock.packages && lock.packages['node_modules/electron']; if (!electron || typeof electron.version !== 'string') process.exit(1); process.stdout.write(electron.version);" $packageLockPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not read the Electron version from package-lock.json: $packageLockPath"
+  }
+  $lockedElectronVersion = ([string]$lockedElectronVersion).Trim()
+  if (-not $lockedElectronVersion -or $electronVersion -ne $lockedElectronVersion) {
+    throw "Electron runtime version $electronVersion does not match package-lock.json ($lockedElectronVersion)."
   }
   Copy-Item -LiteralPath $electronDistribution -Destination (Join-Path $appSource 'electron-runtime') -Recurse -Force
 
@@ -129,6 +155,12 @@ try {
   }
   finally {
     Pop-Location
+  }
+  foreach ($installerScript in @('configure-firewall.ps1', 'install-service.ps1', 'uninstall-service.ps1')) {
+    $stagedInstallerScript = Join-Path $scriptStage $installerScript
+    if (-not (Test-Path -LiteralPath $stagedInstallerScript -PathType Leaf)) {
+      throw "Staged installer input is missing: $stagedInstallerScript"
+    }
   }
 
   $nodeArchive = Join-Path $downloads "node-v$nodeVersion-win-x64.zip"

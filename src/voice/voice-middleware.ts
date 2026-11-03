@@ -17,6 +17,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { BusEnvelope } from '../channels/types.js';
 import { pythonCommand } from '../runtime/platform.js';
+import { transcribeWindowsAudio, type SpeechRecognitionMode } from './speech-service.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -41,6 +42,7 @@ export interface TranscriptionResult {
   duration: number;
   processingTime: number;
   isEmpty: boolean;
+  confidence?: number;
   error?: string;
 }
 
@@ -59,9 +61,18 @@ export function isVoiceMessage(envelope: BusEnvelope): boolean {
  * Transcribe a voice message and return the transcript.
  * Uses faster-whisper via the stt.py CLI.
  */
-export async function transcribeAudio(audioPath: string): Promise<TranscriptionResult> {
+export async function transcribeAudio(
+  audioPath: string,
+  mode: SpeechRecognitionMode = 'dictation',
+  agentName = '',
+): Promise<TranscriptionResult> {
   try {
-    const python = pythonExec(path.join(VOICE_DIR, 'stt.py'), VOICE_PYTHON);
+    const sttScript = path.join(VOICE_DIR, 'stt.py');
+    if (!fs.existsSync(sttScript)) {
+      if (process.platform === 'win32') return await transcribeWindowsAudio(audioPath, mode, agentName);
+      throw new Error(`Local speech recognition is not installed. Expected ${sttScript}.`);
+    }
+    const python = pythonExec(sttScript, VOICE_PYTHON);
     const { stdout } = await execFileAsync(
       python.file,
       [...python.args, audioPath],
@@ -74,6 +85,9 @@ export async function transcribeAudio(audioPath: string): Promise<TranscriptionR
       duration: result.duration ?? 0,
       processingTime: result.processing_time ?? 0,
       isEmpty: result.is_empty ?? true,
+      ...(typeof result.confidence === 'number' && Number.isFinite(result.confidence)
+        ? { confidence: result.confidence }
+        : {}),
     };
   } catch (err) {
     console.error('[voice-middleware] Transcription failed:', err);

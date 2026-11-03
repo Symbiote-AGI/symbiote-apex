@@ -56,6 +56,8 @@ export interface WhatsAppConfigBlock {
   policy?: ChannelPolicyConfig;
 }
 
+import type { NeuralMemoryConfig } from '../memory/neural-memory.js';
+
 export interface ProviderConfigBlock {
   apiKey?: string;
   baseUrl?: string;
@@ -77,6 +79,10 @@ export interface OrchestratorConfigBlock {
   [key: string]: unknown;
 }
 
+export interface MemoryConfigBlock {
+  neural?: NeuralMemoryConfig;
+}
+
 export interface SymbioteConfig {
   name?: string;
   emoji?: string;
@@ -90,6 +96,7 @@ export interface SymbioteConfig {
     ollama?: ProviderConfigBlock;
     gladius?: ProviderConfigBlock;
     'github-copilot'?: ProviderConfigBlock;
+    freeai?: ProviderConfigBlock;
     artifactEngine?: ProviderConfigBlock;
   };
   defaultProvider: string;
@@ -123,6 +130,7 @@ export interface SymbioteConfig {
   discordExtra?: DiscordConfigBlock[];
   whatsapp?: WhatsAppConfigBlock;
   orchestrator?: OrchestratorConfigBlock;
+  memory?: MemoryConfigBlock;
   tools?: {
     enabled?: boolean;
   };
@@ -133,7 +141,7 @@ const DEFAULT_CONFIG: SymbioteConfig = {
   emoji: 'bot',
   providers: {},
   defaultProvider: 'openrouter',
-  defaultModel: 'openrouter/free',
+  defaultModel: '',
   maxTokens: 8192,
   temperature: 0.7,
   maxIterations: 100,
@@ -144,6 +152,11 @@ const DEFAULT_CONFIG: SymbioteConfig = {
     ownerAccess: true,
     internalTier: 'standard',
     nonOwnerTier: 'restricted',
+  },
+  memory: {
+    neural: {
+      enabled: false,
+    },
   },
   ownerIds: [],
   apiPort: 3006,
@@ -195,6 +208,7 @@ function resolveEnvKeys(config: SymbioteConfig): SymbioteConfig {
   injectKey('openai', 'OPENAI_API_KEY');
   injectKey('gemini', 'GEMINI_API_KEY');
   injectKey('groq', 'GROQ_API_KEY');
+  injectKey('freeai', 'FREEAI_API_KEY');
   injectKey('xai', 'XAI_API_KEY');
   injectKey('nvidia', 'NVIDIA_API_KEY');
   injectKey('openrouter', 'OPENROUTER_API_KEY');

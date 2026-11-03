@@ -1,7 +1,9 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Windows.Forms;
 
@@ -36,6 +38,36 @@ internal static class SymbioteLauncher
 
         try
         {
+            using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+            {
+                var principal = new WindowsPrincipal(identity);
+                if (!principal.IsInRole(WindowsBuiltInRole.Administrator))
+                {
+                    var elevated = new ProcessStartInfo(Application.ExecutablePath);
+                    elevated.WorkingDirectory = root;
+                    elevated.UseShellExecute = true;
+                    elevated.Verb = "runas";
+                    try
+                    {
+                        Process.Start(elevated);
+                    }
+                    catch (Win32Exception error)
+                    {
+                        if (error.NativeErrorCode == 1223)
+                        {
+                            MessageBox.Show(
+                                "Administrator approval is required to start Symbiote.",
+                                "Symbiote could not start",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Warning);
+                            return 1;
+                        }
+                        throw;
+                    }
+                    return 0;
+                }
+            }
+
             var output = new StringBuilder();
             var info = new ProcessStartInfo("node.exe", Quote(script));
             info.WorkingDirectory = root;

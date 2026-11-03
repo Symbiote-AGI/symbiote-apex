@@ -8,6 +8,7 @@ import { getSarsiPrompt } from '../sarsi/index.js';
 import { listSkillSummaries } from '../memory/skills.js';
 import os from 'node:os';
 import { describeShell } from '../runtime/platform.js';
+import { SYMBIOTE_RUNTIME_CAPABILITIES, SYMBIOTE_API_ROUTES } from '../memory/runtime-shard.js';
 
 export interface SystemPromptParams {
   workspace: string;
@@ -96,6 +97,12 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     `- Chat type: ${params.chatType ?? 'unknown'}`,
     params.senderId ? `- Sender: ${params.senderId}` : '',
   ].filter(Boolean).join('\n'));
+
+  addSection('Symbiote Runtime Capabilities', [
+    SYMBIOTE_RUNTIME_CAPABILITIES,
+    'Built-in aggregator and market routes:',
+    ...SYMBIOTE_API_ROUTES.map(route => `- ${route.method} ${route.path}: ${route.description}`),
+  ].join('\n'));
 
   // ── Workspace files (personality, identity, protocols) ──
   const filesToLoad = params.workspaceFiles ?? WORKSPACE_FILES;

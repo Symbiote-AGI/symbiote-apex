@@ -17,6 +17,7 @@
 import { APP_VERSION } from '../meta/version.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { atomicWriteFile } from './manager.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,28 @@ export class HotResumeManager {
     }
   }
 
+  /** Remove a session from in-memory and persisted resume state. */
+  forgetSession(sessionId: string): boolean {
+    const removed = this.activeSessions.delete(sessionId);
+    if (!fs.existsSync(this.stateFile)) return removed;
+    let parsedState: unknown;
+    try {
+      parsedState = JSON.parse(fs.readFileSync(this.stateFile, 'utf-8')) as unknown;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return removed;
+      throw new Error(`Could not read hot-resume state at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+    if (!parsedState || typeof parsedState !== 'object' || Array.isArray(parsedState)
+      || !Array.isArray((parsedState as Partial<HotResumeState>).sessions)) {
+      throw new Error(`Hot-resume state at ${this.stateFile} has no session list.`);
+    }
+    const state = parsedState as HotResumeState;
+    const sessions = state.sessions.filter(session => session.sessionId !== sessionId);
+    if (sessions.length === state.sessions.length) return removed;
+    atomicWriteFile(this.stateFile, JSON.stringify({ ...state, sessions }, null, 2), 'hot-resume state', 'hot-resume');
+    return true;
+  }
+
   /** Update last activity timestamp */
   touch(sessionId: string): void {
     const session = this.activeSessions.get(sessionId);
@@ -137,33 +160,64 @@ export class HotResumeManager {
         primaryModel: this.model,
       };
 
-      fs.writeFileSync(this.stateFile, JSON.stringify(state, null, 2));
-    } catch {
-      // Non-fatal — hot resume is best-effort
+      atomicWriteFile(this.stateFile, JSON.stringify(state, null, 2), 'hot-resume state', 'hot-resume');
+    } catch (error) {
+      console.error(`[hot-resume] Could not save state: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   /** Restore state from disk. Returns previous sessions or null if no state found. */
   static restore(sessionsDir: string): HotResumeState | null {
     const stateFile = path.join(sessionsDir, 'hot-state.json');
+    let raw: string;
     try {
-      if (!fs.existsSync(stateFile)) return null;
-      const raw = fs.readFileSync(stateFile, 'utf-8');
-      const state = JSON.parse(raw) as HotResumeState;
-
-      // Validate age — don't restore state older than 24h
-      if (Date.now() - state.savedAt > 24 * 60 * 60 * 1000) {
-        fs.unlinkSync(stateFile);
-        return null;
-      }
-
-      // Clean up the state file after reading (one-shot restore)
-      fs.unlinkSync(stateFile);
-
-      return state;
-    } catch {
+      raw = fs.readFileSync(stateFile, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      console.error(`[hot-resume] Could not read state at ${stateFile}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
+    let state: HotResumeState;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('expected a JSON object');
+      const candidate = parsed as Partial<HotResumeState>;
+      if (!Number.isFinite(candidate.savedAt) || typeof candidate.version !== 'string'
+        || !Number.isSafeInteger(candidate.pid) || !Array.isArray(candidate.sessions)
+        || !['shutdown', 'checkpoint', 'crash'].includes(String(candidate.reason))
+        || typeof candidate.primaryProvider !== 'string' || typeof candidate.primaryModel !== 'string'
+        || candidate.sessions.some(session => !session || typeof session.sessionId !== 'string'
+          || typeof session.channelType !== 'string' || typeof session.adapterId !== 'string'
+          || typeof session.chatId !== 'string' || !Number.isFinite(session.lastActivity)
+          || typeof session.wasActive !== 'boolean' || typeof session.provider !== 'string'
+          || typeof session.model !== 'string')) {
+        throw new Error('hot-resume state fields are invalid');
+      }
+      state = candidate as HotResumeState;
+    } catch (error) {
+      console.error(`[hot-resume] Invalid state at ${stateFile}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+
+    if (Date.now() - state.savedAt > 24 * 60 * 60 * 1000 || state.savedAt > Date.now() + 60_000) {
+      try {
+        fs.unlinkSync(stateFile);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.error(`[hot-resume] Could not remove expired state at ${stateFile}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      return null;
+    }
+
+    try {
+      fs.unlinkSync(stateFile);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error(`[hot-resume] Could not consume restored state at ${stateFile}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return state;
   }
 
   /** Get sessions that were recently active (within last N minutes) */

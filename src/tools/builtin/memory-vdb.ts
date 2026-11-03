@@ -5,7 +5,8 @@
 // Zero external deps, zero RAM when idle.
 
 import type { ToolDefinition } from '../types.js';
-import { getSharedVectorDB, ingestSessions, type VectorDB } from '../../memory/vdb.js';
+import { getSharedVectorDB, ingestSessions, type SearchResult, type VectorDB } from '../../memory/vdb.js';
+import { getSharedNeuralMemory } from '../../memory/neural-memory.js';
 import { DurableMemory, resolveDurableMemoryArchive } from '../../memory/durable-memory.js';
 import { resolveMemoGraphStorageDir } from '../../memory/memograph.js';
 import fs from 'node:fs';
@@ -71,7 +72,7 @@ function maybeIngest(db: VectorDB): void {
 
 export const vdbSearchTool: ToolDefinition = {
   name: 'memory_recall',
-  description: 'Search your persistent memory — past conversations, decisions, context. Finds relevant memories from WhatsApp, Discord, webchat, and COMB entries.',
+  description: 'Search persistent memory using lexical BM25/TF-IDF and, when configured, dense semantic retrieval. Results preserve source provenance and can be filtered by source.',
   parameters: {
     type: 'object',
     properties: {
@@ -89,23 +90,51 @@ export const vdbSearchTool: ToolDefinition = {
     const query = String(input.query ?? '');
     const k = Number(input.k ?? 5);
     const source = input.source ? String(input.source) : undefined;
+    if (!query.trim()) throw new Error('Memory search query must not be empty.');
+    if (!Number.isInteger(k) || k < 1 || k > 50) throw new RangeError('Memory search result count must be an integer from 1 to 50.');
 
     const db = getVDB();
 
     // Auto-ingest new sessions in background
     maybeIngest(db);
 
-    const results = db.search(query, k, source ? { source } : undefined);
+    const filter = source ? { source } : undefined;
+    const neuralMemory = getSharedNeuralMemory(getWorkspace());
+    let results: SearchResult[];
+    let degradedReason: string | undefined;
+    if (neuralMemory) {
+      const status = neuralMemory.status();
+      if (status.indexedDocuments === 0 && status.corpusDocuments > 0) {
+        degradedReason = status.lastError ?? 'the dense index has not been backfilled yet';
+      }
+      try {
+        results = await neuralMemory.search(query, k, filter);
+      } catch (failure) {
+        degradedReason = failure instanceof Error ? failure.message : String(failure);
+        console.error(`[memory] Neural search failed; lexical search is being used: ${degradedReason}`);
+        results = db.search(query, k, filter);
+      }
+      void neuralMemory.indexMissing(64).catch(failure => {
+        console.error(`[memory] Dense index backfill failed: ${failure instanceof Error ? failure.message : String(failure)}`);
+      });
+    } else {
+      results = db.search(query, k, filter);
+    }
 
     if (results.length === 0) {
-      return 'No relevant memories found. The VDB may need initial ingestion — try memory_ingest first.';
+      return degradedReason
+        ? `No relevant memories found. Dense search is unavailable (${degradedReason}); lexical search was also empty.`
+        : 'No relevant memories found. The VDB may need initial ingestion — try memory_ingest first.';
     }
 
     const lines: string[] = [`Found ${results.length} memories:\n`];
+    if (degradedReason) lines.push(`Dense search unavailable; lexical results shown. Reason: ${degradedReason}\n`);
     for (const r of results) {
       const date = new Date(r.timestamp).toISOString().slice(0, 16).replace('T', ' ');
       const preview = r.text.length > 300 ? r.text.slice(0, 300) + '...' : r.text;
-      lines.push(`[${date}] (${r.source}/${r.role}, score: ${r.score.toFixed(3)})`);
+      const provenance = r.metadata?.sourceRef ?? r.namespace ?? r.id;
+      const memoryType = r.metadata?.memoryType ?? 'unclassified';
+      lines.push(`[${date}] (${r.source}/${r.role}, type=${memoryType}, ref=${provenance}, score=${r.score.toFixed(3)})`);
       lines.push(preview);
       lines.push('');
     }
@@ -140,6 +169,17 @@ export const vdbIngestTool: ToolDefinition = {
     lines.push(`Total: ${totalProcessed} processed, ${totalIndexed} new`);
     lines.push(`VDB: ${stats.documentCount} documents, ${stats.termCount} terms, ${(stats.diskBytes / 1024).toFixed(0)}KB on disk`);
     lines.push(`Sources: ${JSON.stringify(stats.sources)}`);
+    const neuralMemory = getSharedNeuralMemory(getWorkspace());
+    if (neuralMemory) {
+      try {
+        const embedded = await neuralMemory.indexMissing(10_000);
+        const status = neuralMemory.status();
+        lines.push(`Neural memory: ${status.state}, ${status.indexedDocuments}/${status.corpusDocuments} documents embedded with ${status.model}; ${embedded} newly indexed.`);
+      } catch (failure) {
+        const status = neuralMemory.status();
+        lines.push(`Neural memory: ${status.state}; embedding failed: ${failure instanceof Error ? failure.message : String(failure)}`);
+      }
+    }
 
     return lines.join('\n');
   },
@@ -166,7 +206,7 @@ export const vdbStatsTool: ToolDefinition = {
       resolveDurableMemoryArchive(workspace),
       resolveMemoGraphStorageDir(workspace),
     ).stats();
-    return [
+    const lines = [
       `VDB Statistics:`,
       `  Documents: ${stats.documentCount}`,
       `  Terms: ${stats.termCount}`,
@@ -175,6 +215,13 @@ export const vdbStatsTool: ToolDefinition = {
       `  Sources: ${JSON.stringify(stats.sources)}`,
       `Durable JSONL records: ${durable.archiveRecords} (${durable.archivePath})`,
       `Memograph shards: ${durable.graphShards}/${durable.verifiedShards} hash-verified (${durable.graphPath})`,
-    ].join('\n');
+    ];
+    const neuralMemory = getSharedNeuralMemory(workspace);
+    if (neuralMemory) {
+      const status = neuralMemory.status();
+      lines.push(`Neural memory: ${status.state}, ${status.indexedDocuments}/${status.corpusDocuments} dense vectors, provider ${status.provider}, model ${status.model}, dimensions ${status.dimensions}`);
+      if (status.lastError) lines.push(`Neural memory diagnostic: ${status.lastError}`);
+    }
+    return lines.join('\n');
   },
 };

@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   test:
@@ -22,11 +23,28 @@ jobs:
             webapp/package-lock.json
       - run: npm ci
       - run: npm --prefix webapp ci
+      - name: Verify release metadata
+        run: npm run check:release -- "${GITHUB_REF_NAME}"
+      - name: Audit dependencies
+        run: |
+          npm audit --audit-level=high
+          npm --prefix webapp audit --audit-level=high
       - run: npm run build
-      - run: node --test --test-concurrency=1 dist/test/*.test.js
+      - name: Unit, integration, and security regression tests
+        run: npm test
+
+  codeql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
 
   linux-package:
-    needs: test
+    needs: [test, codeql]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +63,8 @@ jobs:
         run: |
           mkdir -p release-assets
           npm pack --pack-destination release-assets
+          npm sbom --package-lock-only --sbom-format=spdx --sbom-type=application > release-assets/symbiote-linux.spdx.json
+          npm --prefix webapp sbom --package-lock-only --sbom-format=spdx --sbom-type=application > release-assets/symbiote-webapp-linux.spdx.json
           cd release-assets
           sha256sum *.tgz > SHA256SUMS-linux.txt
       - uses: actions/upload-artifact@v4
@@ -54,7 +74,7 @@ jobs:
           if-no-files-found: error
 
   windows-msi:
-    needs: test
+    needs: [test, codeql]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,14 +89,21 @@ jobs:
       - run: node node_modules/electron/install.js
       - run: npm --prefix webapp ci
       - run: npm run build:msi
+      - name: Generate SPDX SBOMs
+        run: |
+          npm sbom --package-lock-only --sbom-format=spdx --sbom-type=application > dist/windows-installer/symbiote-windows.spdx.json
+          npm --prefix webapp sbom --package-lock-only --sbom-format=spdx --sbom-type=application > dist/windows-installer/symbiote-webapp-windows.spdx.json
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release-assets
-          path: dist/windows-installer/*
+          path: |
+            dist/windows-installer/*.msi
+            dist/windows-installer/SHA256SUMS-windows.txt
+            dist/windows-installer/*.spdx.json
           if-no-files-found: error
 
   github-package:
-    needs: test
+    needs: [test, codeql]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -116,5 +143,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           name: Symbiote ${{ github.ref_name }}
-          body_path: RELEASE_NOTES_${{ github.ref_name }}.md
+          body_path: docs/releases/RELEASE_NOTES_${{ github.ref_name }}.md
           files: release-assets/*

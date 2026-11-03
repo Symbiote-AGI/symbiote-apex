@@ -30,6 +30,18 @@
   "tools": {
     "enabled": true
   },
+  "memory": {
+    "neural": {
+      "enabled": true,
+      "provider": "ollama",
+      "baseUrl": "http://127.0.0.1:11434",
+      "model": "bge-m3",
+      "timeoutMs": 120000,
+      "lexicalWeight": 0.4,
+      "denseWeight": 0.6,
+      "temporalHalfLifeDays": 180
+    }
+  },
   "sandbox": {
     "enabled": false,
     "ownerAccess": true,

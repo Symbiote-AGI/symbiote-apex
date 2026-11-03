@@ -117,7 +117,13 @@ export function importSkillFiles(database: VectorDB, skillsDir: string): SkillIm
         role: 'context',
         timestamp: fs.statSync(filePath).mtimeMs,
         namespace,
-        metadata: { name: meta.name, description: meta.description, file: filePath },
+        metadata: {
+          name: meta.name,
+          description: meta.description,
+          file: filePath,
+          memoryType: 'procedural',
+          sourceRef: filePath,
+        },
       };
       documents.push(doc);
       const old = previous.get(id);

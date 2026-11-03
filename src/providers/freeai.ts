@@ -44,6 +44,10 @@ function convertTools(tools: ToolDef[]): unknown[] {
 }
 
 async function* streamFreeAI(messages: Message[], tools: ToolDef[], config: ProviderConfig): AsyncIterable<StreamEvent> {
+  if (!config.apiKey?.trim()) {
+    throw new Error('FreeAI API key is required. Set FREEAI_API_KEY in .env to use this provider.');
+  }
+
   const baseUrl = config.baseUrl ?? DEFAULT_BASE_URL;
 
   const body: Record<string, unknown> = {

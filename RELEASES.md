@@ -1,21 +1,25 @@
 # Symbiote Releases
 
-## Latest: v5.6.2 Apex (October 29, 2026)
-Hardened Windows shortcut, wizard, and source-install flows; added on-demand update checks and MSI download progress; improved runtime, session, heartbeat, integration, and workspace reliability. Details: [Release Notes](RELEASE_NOTES_v5.6.2.md).
+## Latest: v5.7.0 Apex (November 2, 2026)
+Introduces the connector engine, agent-enabled Markets workspace, optional local neural memory, OpenSky-backed resource aggregation, provider discovery, and a gateway-supervised recovery UI. Details: [Release Notes](docs/releases/RELEASE_NOTES_v5.7.0.md).
+
+## v5.6.2 Apex (October 29, 2026)
+Hardened Windows shortcut, wizard, and source-install flows; added on-demand update checks and MSI download progress; improved runtime, session, heartbeat, integration, and workspace reliability. Details: [Release Notes](docs/releases/RELEASE_NOTES_v5.6.2.md).
 
 ## v5.6.1 Apex (October 25, 2026)
-Fixed duplicate assistant history and completion events, hardened session persistence and process startup/output handling, and constrained SARSI routing to configured provider/model choices. Details: [Release Notes](RELEASE_NOTES_v5.6.1.md).
+Fixed duplicate assistant history and completion events, hardened session persistence and process startup/output handling, and constrained SARSI routing to configured provider/model choices. Details: [Release Notes](docs/releases/RELEASE_NOTES_v5.6.1.md).
 
 ## v5.6.0 Apex (October 23, 2026)
-HttpMcpBridge integration for remote n8n connections, WhatsApp QR support in GatewayStatus, enhanced health telemetry with provider call tracking, stabilized Electron gateway lifecycle, UI/UX refinements, and idempotency metadata for all tool definitions. Details: [Release Notes](RELEASE_NOTES_v5.6.0.md).
+HttpMcpBridge integration for remote n8n connections, WhatsApp QR support in GatewayStatus, enhanced health telemetry with provider call tracking, stabilized Electron gateway lifecycle, UI/UX refinements, and idempotency metadata for all tool definitions. Details: [Changelog](CHANGELOG.md).
 
 ## v5.5.0 Apex (October 17, 2026)
-Project-scoped agent operations and project memory, a redesigned workspace hierarchy, system GPU/per-core CPU telemetry, consistent slider-controlled appearance, weighted memory similarity, and hardened Discord streaming and Windows telemetry. Details: [Release Notes](RELEASE_NOTES_v5.5.0.md).
+Project-scoped agent operations and project memory, a redesigned workspace hierarchy, system GPU/per-core CPU telemetry, consistent slider-controlled appearance, weighted memory similarity, and hardened Discord streaming and Windows telemetry. Details: [Changelog](CHANGELOG.md).
 
 ## All Releases
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| **v5.7.0 Apex** | Nov 2, 2026 | Connectors, Markets, neural memory, public resource aggregation, provider discovery, recovery UI, production automation |
 | **v5.6.2 Apex** | Oct 29, 2026 | Windows launch and setup hardening, update progress, runtime and UI reliability |
 | **v5.6.1 Apex** | Oct 25, 2026 | Runner and history duplication fixes, session persistence hardening, process error handling, configured SARSI routes |
 | **v5.6.0 Apex** | Oct 23, 2026 | Remote n8n integration, WhatsApp QR setup, health telemetry, Electron lifecycle and UI refinements |

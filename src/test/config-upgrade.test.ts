@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { upgradeConfig, upgradeConfigFile } from '../config/upgrade.js';
+import { loadConfig } from '../config/config.js';
 import { buildConfigTemplate, CONFIG_VERSION } from '../config/template.js';
 import { validateConfig } from '../config/validator.js';
 import { buildEnvFile, defaultSetupInput } from '../cli/setup.js';
@@ -28,7 +29,9 @@ test('upgrade fills every stub, relativizes paths and removes legacy keys', () =
   assert.deepEqual(config.ownerIds, ['123']);
   assert.ok(!('mach6' in config) && !('notes' in config));
   assert.deepEqual(config.allowedOrigins, ['http://localhost:3009']);
-  for (const key of ['heartbeat', 'timeouts', 'tools', 'whatsapp', 'orchestrator', 'adaptiveTemperature']) assert.ok(key in config, key);
+  for (const key of ['heartbeat', 'timeouts', 'tools', 'whatsapp', 'orchestrator', 'adaptiveTemperature', 'memory']) assert.ok(key in config, key);
+  assert.equal(config.memory.neural.model, 'bge-m3');
+  assert.equal(config.memory.neural.enabled, false);
   assert.ok(changes.length > 0);
 });
 
@@ -74,6 +77,30 @@ test('the template passes validation and the env file keeps unknown keys', () =>
   assert.match(env, /SYMBIOTE_API_KEY=k{64}/);
 });
 
+test('config fallback does not choose a model outside symbiote.json', () => {
+  const missingConfig = path.join(os.tmpdir(), `symbiote-missing-${process.pid}.json`);
+  assert.equal(loadConfig(missingConfig).defaultModel, '');
+});
+
+test('FreeAI key is loaded from the environment when its config key is unset', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'symbiote-freeai-config-'));
+  const previousKey = process.env.FREEAI_API_KEY;
+  try {
+    process.env.FREEAI_API_KEY = 'test-freeai-key';
+    const configPath = path.join(dir, 'symbiote.json');
+    fs.writeFileSync(configPath, JSON.stringify({
+      providers: { freeai: { baseUrl: 'https://freeai-test.example/v1' } },
+    }));
+
+    const config = loadConfig(configPath);
+    assert.equal(config.providers.freeai?.apiKey, 'test-freeai-key');
+  } finally {
+    if (previousKey === undefined) delete process.env.FREEAI_API_KEY;
+    else process.env.FREEAI_API_KEY = previousKey;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('heartbeat intervals and quiet-hour boundaries reject invalid values', () => {
   const template = buildConfigTemplate({ ownerIds: ['1'] });
   const config = { ...template, workspace: process.cwd(), heartbeat: {
@@ -91,4 +118,15 @@ test('heartbeat intervals and quiet-hour boundaries reject invalid values', () =
     'heartbeat.quietHoursStart',
     'heartbeat.sleepingIntervalMin',
   ]);
+});
+
+test('neural memory settings require an installed model and valid hybrid weights', () => {
+  const template = buildConfigTemplate({ ownerIds: ['1'] });
+  const config = {
+    ...template,
+    workspace: process.cwd(),
+    memory: { neural: { enabled: true, model: ' ', lexicalWeight: 0, denseWeight: 0 } },
+  };
+  const issues = validateConfig(config as any).filter(issue => issue.field.startsWith('memory.neural'));
+  assert.deepEqual(issues.map(issue => issue.field).sort(), ['memory.neural', 'memory.neural.model']);
 });

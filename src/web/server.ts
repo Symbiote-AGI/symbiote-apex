@@ -6,22 +6,41 @@
 import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { pipeline } from 'node:stream/promises';
 import { palette, ok } from '../cli/brand.js';
 import { loadConfig } from '../config/config.js';
 import { APP_VERSION } from '../meta/version.js';
 import type { IntegrationProvider } from '../security/credential-vault.js';
+import type { ConnectorActivity, ConnectorCatalogEntry } from '../connectors/types.js';
 import type { N8nConnectionInfo } from '../tools/builtin/cloud-integrations.js';
 import { stripBlinkControlMessages } from '../agent/blink.js';
 import type { CronAlert, CronJob, CreateCronJobInput, UpdateCronJobInput } from '../cron/manager.js';
-import type { AgentThread, CreateThreadInput, ThreadContact } from '../threads/manager.js';
+import type { AgentThread, CreateSpaceTopicInput, CreateThreadInput, ThreadContact } from '../threads/manager.js';
 import { isSupportedAgentIcon, type ProjectTask, type ProjectTaskPatch } from '../agent/workspace-registry.js';
 import type { AppearanceSettings } from '../appearance/settings.js';
 import type { ReleaseUpdateStatus } from '../updates/release-checker.js';
 import type { ReleaseDownloadStatus } from '../updates/release-updater.js';
 import type { TailscaleIntegrationStatus } from '../network/tailscale.js';
+import type {
+  PipelineReport,
+  ResourceAggregatorDashboard,
+  SourceSnapshot,
+  VectorEntity,
+  VectorSimilarityResult,
+  VectorSearchResult,
+} from '../resource-aggregator/types.js';
+import type { MarketHistory } from '../markets/public-market-data.js';
+import type { Mt5Bridge, Mt5Order } from '../markets/mt5-bridge.js';
+import type { BinanceBridge, BinanceMarketOrder } from '../markets/binance-bridge.js';
+import type { TradeJournal } from '../markets/trade-journal.js';
+import type { MarketChartState } from '../markets/chart-workspace.js';
+import { SYMBIOTE_API_ROUTES } from '../memory/runtime-shard.js';
 import { createSseTextFilter } from './sse-text-filter.js';
+import { transcribeAudio } from '../voice/voice-middleware.js';
+import { getSpeechCapabilities, removeSpeechFile, synthesizeWindowsSpeech, type SpeechSynthesisRequest } from '../voice/speech-service.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -88,6 +107,7 @@ export interface WebControlPlane {
   getSessions: () => unknown[];
   ensureMemorySession?: () => unknown;
   ensureGammaHeartbeatSession?: () => unknown;
+  ensureMarketsSession?: () => unknown;
   getSessionMessages: (id: string) => unknown[] | null;
   createSession: (name?: string, options?: { projectId?: string; agentId?: string }) => unknown;
   getProjects: (includeArchived?: boolean) => unknown[];
@@ -120,8 +140,42 @@ export interface WebControlPlane {
   archiveSession: (id: string) => boolean;
   getTools: () => unknown[];
   getIntegrationStatus: () => Record<IntegrationProvider, boolean>;
+  getConnectors?: () => ConnectorCatalogEntry[];
+  connectConnector?: (id: string, credentials: unknown) => Promise<ConnectorCatalogEntry>;
+  disconnectConnector?: (id: string) => Promise<void>;
+  getConnectorPermissions?: (agentId: string) => Record<string, string[]>;
+  setConnectorCapabilities?: (agentId: string, id: string, capabilities: string[]) => void;
+  getConnectorActivity?: (limit: number) => ConnectorActivity[];
   getTailscaleStatus?: () => Promise<TailscaleIntegrationStatus>;
   setTailscaleAccess?: (enabled: boolean) => Promise<TailscaleIntegrationStatus>;
+  getResourceAggregatorDashboard?: () => ResourceAggregatorDashboard;
+  getResourceAggregatorSettings?: () => { collectionIntervalMs: number };
+  updateResourceAggregatorSettings?: (milliseconds: number) => { collectionIntervalMs: number };
+  getResourceAggregatorSource?: (id: string) => SourceSnapshot | undefined;
+  getResourceAggregatorEntities?: () => VectorEntity[];
+  getResourceAggregatorSimilar?: (id: string, limit: number) => VectorSimilarityResult | null;
+  searchResourceVectors?: (query: string, limit: number) => Promise<VectorSearchResult>;
+  refreshResourceAggregator?: () => Promise<PipelineReport>;
+  getPublicMarketHistory?: (symbol: string, interval: string, limit: string | null) => Promise<MarketHistory>;
+  getMarketChartState?: (symbol: string, interval: string) => MarketChartState;
+  saveMarketChartState?: (symbol: string, interval: string, state: unknown) => MarketChartState;
+  getMt5Status?: () => { configured: boolean; terminalPath?: string };
+  saveMt5Credentials?: (credentials: unknown) => void;
+  saveMt5TerminalPath?: (terminalPath: string) => void;
+  launchMt5Terminal?: () => ReturnType<Mt5Bridge['launchTerminal']>;
+  deleteMt5Credentials?: () => void;
+  testMt5Connection?: (symbol?: string) => ReturnType<Mt5Bridge['test']>;
+  getMt5Positions?: () => ReturnType<Mt5Bridge['positions']>;
+  getMt5TradeJournal?: (limit?: number) => ReturnType<TradeJournal['snapshot']>;
+  syncMt5TradeJournal?: () => Promise<boolean>;
+  placeMt5Order?: (order: Mt5Order) => ReturnType<Mt5Bridge['order']>;
+  closeMt5Position?: (ticket: number) => ReturnType<Mt5Bridge['close']>;
+  modifyMt5Position?: (ticket: number, stopLoss?: number, takeProfit?: number) => ReturnType<Mt5Bridge['modify']>;
+  getBinanceStatus?: () => ReturnType<BinanceBridge['status']>;
+  saveBinanceCredentials?: (credentials: unknown) => void;
+  deleteBinanceCredentials?: () => void;
+  testBinanceConnection?: () => ReturnType<BinanceBridge['testConnection']>;
+  placeBinanceMarketOrder?: (order: BinanceMarketOrder) => ReturnType<BinanceBridge['placeMarketOrder']>;
   getN8nConnectionInfo?: () => N8nConnectionInfo;
   saveIntegrationCredentials: (provider: IntegrationProvider, credentials: unknown) => void;
   deleteIntegrationCredentials: (provider: IntegrationProvider) => void;
@@ -135,7 +189,8 @@ export interface WebControlPlane {
   getThreads: (includeArchived?: boolean) => AgentThread[];
   getUnreadThreadRequests: () => unknown[];
   createThread: (input: CreateThreadInput) => AgentThread;
-  postThreadMessage: (id: string, body: string, mentions?: string[]) => AgentThread;
+  createThreadTopic: (id: string, input: CreateSpaceTopicInput) => AgentThread;
+  postThreadMessage: (id: string, body: string, mentions?: string[], topicId?: string) => AgentThread;
   markThreadRead: (id: string, postId?: string) => AgentThread;
   reactToThreadPost: (id: string, postId: string, emoji: string) => AgentThread;
   archiveThread: (id: string) => boolean;
@@ -153,6 +208,7 @@ export interface WebControlPlane {
     emit?: (event: Record<string, unknown>) => void,
   ) => Promise<unknown>;
   interruptSession: (id: string) => boolean;
+  setSessionLabel?: (id: string, label: string) => boolean;
   getRuns: () => unknown[];
   startRun: (request: { name?: string; prompt: string; sessionId: string; googleWorkspaceAccessToken?: string; trustedAdminContext?: boolean }) => unknown;
   stopRun: (id: string) => boolean;
@@ -453,6 +509,7 @@ function serveStatic(res: http.ServerResponse, filePath: string): void {
     '.html': 'text/html',
     '.css': 'text/css',
     '.js': 'application/javascript',
+    '.mjs': 'text/javascript',
     '.json': 'application/json',
     '.png': 'image/png',
     '.svg': 'image/svg+xml',
@@ -478,6 +535,7 @@ const WEBAPP_DIR = fs.existsSync(path.join(workspaceWebappDir, 'index.html'))
   ? workspaceWebappDir
   : bundledWebappDir;
 const LEGACY_WEB_DIR = path.resolve(SERVER_DIR, '../../web');
+const NATIVE_WEB_UI_FILE = path.join(LEGACY_WEB_DIR, 'index.html');
 
 function isLoopbackRequest(req: http.IncomingMessage): boolean {
   const address = req.socket.remoteAddress;
@@ -509,6 +567,11 @@ function hasValidAccessToken(req: http.IncomingMessage, expected: string): boole
   const provided = Buffer.from(match[1]);
   const actual = Buffer.from(expected);
   return provided.length === actual.length && crypto.timingSafeEqual(provided, actual);
+}
+
+function isTrustedOperatorRequest(req: http.IncomingMessage, accessToken?: string): boolean {
+  return isTrustedLocalOperatorRequest(req)
+    || (!!accessToken && hasValidAccessToken(req, accessToken));
 }
 
 function tailFile(filename: string, requestedLines: number): string {
@@ -637,6 +700,248 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       if (!control.getTelemetry) return json(res, { error: 'Live telemetry is unavailable in this runtime.' }, 501);
       res.setHeader('Cache-Control', 'no-store');
       return json(res, control.getTelemetry());
+    }
+    if (method === 'GET' && pathname === '/api/resource-aggregator') {
+      if (!control.getResourceAggregatorDashboard) return json(res, { error: 'Resource intelligence is unavailable in this runtime.' }, 503);
+      res.setHeader('Cache-Control', 'no-store');
+      return json(res, control.getResourceAggregatorDashboard());
+    }
+    if (pathname === '/api/resource-aggregator/settings') {
+      if (method === 'GET') {
+        if (!control.getResourceAggregatorSettings) return json(res, { error: 'Resource collection settings are unavailable in this runtime.' }, 503);
+        res.setHeader('Cache-Control', 'no-store');
+        return json(res, control.getResourceAggregatorSettings());
+      }
+      if (method === 'PUT') {
+        if (!isSameOriginRequest(req)) return json(res, { error: 'Resource collection settings can only be changed from the Control Room.' }, 403);
+        if (!control.updateResourceAggregatorSettings) return json(res, { error: 'Resource collection settings are unavailable in this runtime.' }, 503);
+        let body: unknown;
+        try {
+          body = JSON.parse(await readBody(req, 2_000) || '{}');
+        } catch (failure) {
+          return json(res, { error: failure instanceof Error ? failure.message : 'Resource collection settings must be valid JSON.' }, 400);
+        }
+        const collectionIntervalMs = body && typeof body === 'object' && !Array.isArray(body)
+          ? (body as { collectionIntervalMs?: unknown }).collectionIntervalMs
+          : undefined;
+        if (typeof collectionIntervalMs !== 'number' || !Number.isSafeInteger(collectionIntervalMs)) {
+          return json(res, { error: 'collectionIntervalMs must be a whole number of milliseconds.' }, 400);
+        }
+        try {
+          return json(res, control.updateResourceAggregatorSettings(collectionIntervalMs));
+        } catch (failure) {
+          return json(res, { error: failure instanceof Error ? failure.message : 'Resource collection settings could not be saved.' }, 400);
+        }
+      }
+    }
+    const resourceSource = matchRoute('/api/resource-aggregator/sources/:id', pathname);
+    if (method === 'GET' && resourceSource) {
+      if (!control.getResourceAggregatorSource) return json(res, { error: 'Resource intelligence is unavailable in this runtime.' }, 503);
+      const source = control.getResourceAggregatorSource(decodeURIComponent(resourceSource.id));
+      return source ? json(res, source) : json(res, { error: 'Resource source was not found.' }, 404);
+    }
+    if (method === 'GET' && pathname === '/api/resource-aggregator/entities') {
+      if (!control.getResourceAggregatorEntities) return json(res, { error: 'Resource entities are unavailable in this runtime.' }, 503);
+      res.setHeader('Cache-Control', 'no-store');
+      return json(res, { entities: control.getResourceAggregatorEntities() });
+    }
+    const similarRoute = matchRoute('/api/resource-aggregator/vectors/:id/similar', pathname);
+    if (method === 'GET' && similarRoute) {
+      if (!control.getResourceAggregatorSimilar) return json(res, { error: 'Vector similarity is unavailable in this runtime.' }, 503);
+      const requestedLimit = Number(url.searchParams.get('limit') ?? 50);
+      const limit = Number.isFinite(requestedLimit) ? Math.min(50, Math.max(1, Math.floor(requestedLimit))) : 50;
+      const result = control.getResourceAggregatorSimilar(decodeURIComponent(similarRoute.id), limit);
+      return result ? json(res, result) : json(res, { error: 'Vector entity was not found.' }, 404);
+    }
+    if (method === 'GET' && pathname === '/api/resource-aggregator/vectors/search') {
+      if (!control.searchResourceVectors) return json(res, { error: 'Resource vector search is unavailable in this runtime.' }, 503);
+      const query = url.searchParams.get('q')?.trim() ?? '';
+      if (!query) return json(res, { error: 'A non-empty q query parameter is required.' }, 400);
+      const requestedLimit = Number(url.searchParams.get('limit') ?? 10);
+      const limit = Number.isFinite(requestedLimit) ? Math.min(50, Math.max(1, Math.floor(requestedLimit))) : 10;
+      try {
+        return json(res, await control.searchResourceVectors(query, limit));
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Vector search failed.' }, 400);
+      }
+    }
+    if (method === 'GET' && pathname === '/api/markets/history') {
+      if (!control.getPublicMarketHistory) return json(res, { error: 'Public market history is unavailable in this runtime.' }, 503);
+      const symbol = url.searchParams.get('symbol') ?? '';
+      const interval = url.searchParams.get('interval') ?? '1m';
+      try {
+        return json(res, await control.getPublicMarketHistory(symbol, interval, url.searchParams.get('limit')));
+      } catch (failure) {
+        const message = failure instanceof Error ? failure.message : 'Market history request failed.';
+        return json(res, { error: message }, message.startsWith('Unsupported') ? 400 : 502);
+      }
+    }
+    if (method === 'GET' && pathname === '/api/markets/chart-state') {
+      if (!control.getMarketChartState) return json(res, { error: 'Persistent market chart state is unavailable in this runtime.' }, 503);
+      const symbol = url.searchParams.get('symbol') ?? '';
+      const interval = url.searchParams.get('interval') ?? '';
+      try {
+        return json(res, control.getMarketChartState(symbol, interval));
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Market chart state could not be loaded.' }, 400);
+      }
+    }
+    if (method === 'PUT' && pathname === '/api/markets/chart-state') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'Market chart changes must be saved from the Symbiote Control Room.' }, 403);
+      if (!control.saveMarketChartState) return json(res, { error: 'Persistent market chart state is unavailable in this runtime.' }, 503);
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 150_000) || '{}');
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Market chart state must be valid JSON.' }, 400);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json(res, { error: 'Market chart state must be a JSON object.' }, 400);
+      }
+      const value = body as { symbol?: unknown; interval?: unknown; state?: unknown };
+      try {
+        if (typeof value.symbol !== 'string' || typeof value.interval !== 'string') {
+          return json(res, { error: 'A market symbol and interval are required.' }, 400);
+        }
+        return json(res, control.saveMarketChartState(value.symbol, value.interval, value.state));
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Market chart state could not be saved.' }, 400);
+      }
+    }
+    if (method === 'GET' && pathname === '/api/voice/status') {
+      try {
+        return json(res, await getSpeechCapabilities());
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Local speech capabilities could not be loaded.' }, 503);
+      }
+    }
+    if (method === 'POST' && pathname === '/api/voice/synthesize') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'Speech synthesis must be requested from the Symbiote Control Room.' }, 403);
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 50_000) || '{}');
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Speech settings must be valid JSON.' }, 400);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json(res, { error: 'Speech settings must be a JSON object.' }, 400);
+      }
+      const value = body as Partial<SpeechSynthesisRequest>;
+      if (typeof value.text !== 'string' || typeof value.voiceId !== 'string'
+        || typeof value.rate !== 'number' || typeof value.pitch !== 'number'
+        || typeof value.volume !== 'number' || typeof value.style !== 'string') {
+        return json(res, { error: 'Speech text, voice, speed, pitch, volume, and style are required.' }, 400);
+      }
+
+      let speechFile: Awaited<ReturnType<typeof synthesizeWindowsSpeech>> | undefined;
+      try {
+        speechFile = await synthesizeWindowsSpeech(value as SpeechSynthesisRequest);
+        const stats = await fs.promises.stat(speechFile.path);
+        res.writeHead(200, {
+          'Content-Type': 'audio/wav',
+          'Content-Length': stats.size,
+          'Cache-Control': 'no-store',
+        });
+        await pipeline(fs.createReadStream(speechFile.path), res);
+        return;
+      } catch (failure) {
+        if (res.headersSent) {
+          console.error('[voice] Speech audio delivery failed:', failure);
+          res.destroy(failure instanceof Error ? failure : undefined);
+          return;
+        }
+        return json(res, { error: failure instanceof Error ? failure.message : 'Speech synthesis failed.' }, 502);
+      } finally {
+        if (speechFile) {
+          try {
+            await removeSpeechFile(speechFile.path);
+          } catch (failure) {
+            console.error('[voice] Could not remove temporary speech audio:', failure);
+          }
+        }
+      }
+    }
+    if (method === 'POST' && pathname === '/api/voice/transcribe') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'Voice transcription must be requested from the Symbiote Control Room.' }, 403);
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 12_000_000) || '{}');
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Voice recording must be valid JSON.' }, 400);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return json(res, { error: 'Voice recording must be a JSON object.' }, 400);
+      }
+      const value = body as { audioBase64?: unknown; mimeType?: unknown; mode?: unknown; agentName?: unknown };
+      const mode = value.mode === undefined ? 'dictation' : value.mode;
+      if (mode !== 'dictation' && mode !== 'wake') {
+        return json(res, { error: 'Voice transcription mode must be dictation or wake.' }, 400);
+      }
+      let agentName = typeof value.agentName === 'string' ? value.agentName.trim() : '';
+      if (mode === 'wake' && (!agentName || agentName.length > 80)) {
+        const config = control.getConfig();
+        const configuredName = [config.agentName, config.name].find(
+          (name): name is string => typeof name === 'string' && name.trim().length > 0 && name.trim().length <= 80,
+        );
+        agentName = configuredName?.trim() ?? '';
+      }
+      if (mode === 'wake' && !agentName) {
+        return json(res, { error: 'Wake-word recognition needs a configured agent profile name.' }, 503);
+      }
+      if (mode !== 'wake' && value.agentName !== undefined
+        && (typeof value.agentName !== 'string' || value.agentName.trim().length > 80)) {
+        return json(res, { error: 'The agent name must be no more than 80 characters.' }, 400);
+      }
+      const extensions: Record<string, string> = {
+        'audio/webm': 'webm',
+        'audio/ogg': 'ogg',
+        'audio/wav': 'wav',
+        'audio/x-wav': 'wav',
+        'audio/mpeg': 'mp3',
+        'audio/mp4': 'm4a',
+        'audio/aac': 'aac',
+      };
+      const mimeType = typeof value.mimeType === 'string' ? value.mimeType.split(';', 1)[0].trim().toLowerCase() : '';
+      if (!extensions[mimeType] || typeof value.audioBase64 !== 'string'
+        || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.audioBase64)) {
+        return json(res, { error: 'A supported audio recording in base64 format is required.' }, 400);
+      }
+      const audio = Buffer.from(value.audioBase64, 'base64');
+      if (!audio.length || audio.length > 8 * 1024 * 1024 || audio.toString('base64') !== value.audioBase64) {
+        return json(res, { error: 'Voice recordings must be valid base64 audio and no larger than 8 MB.' }, 413);
+      }
+      const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'symbiote-stt-'));
+      const audioPath = path.join(temporaryDirectory, `recording.${extensions[mimeType]}`);
+      try {
+        fs.writeFileSync(audioPath, audio, { flag: 'wx', mode: 0o600 });
+        const result = await transcribeAudio(audioPath, mode, agentName);
+        if (result.error) return json(res, { error: result.error }, 502);
+        if (!result.text.trim()) return json(res, { error: 'No speech was detected in the recording.' }, 422);
+        return json(res, result);
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Voice transcription failed.' }, 502);
+      } finally {
+        try {
+          fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+        } catch (failure) {
+          console.error('[voice] Could not remove temporary transcription audio:', failure);
+        }
+      }
+    }
+    if (method === 'GET' && pathname === '/api/runtime/api-routes') {
+      return json(res, { routes: SYMBIOTE_API_ROUTES });
+    }
+    if (method === 'POST' && pathname === '/api/resource-aggregator/sync') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'Resource feeds can only be refreshed from the Symbiote Control Room.' }, 403);
+      if (!control.refreshResourceAggregator) return json(res, { error: 'Resource feed refresh is unavailable in this runtime.' }, 503);
+      try {
+        const report = await control.refreshResourceAggregator();
+        const { documents: _documents, ...summary } = report;
+        return json(res, summary);
+      } catch (failure) {
+        const message = failure instanceof Error ? failure.message : 'Resource feed refresh failed.';
+        return json(res, { error: message }, message.includes('already active') ? 409 : 503);
+      }
     }
     if (method === 'POST' && pathname === '/api/health/incidents/archive') {
       if (!isSameOriginRequest(req)) return json(res, { error: 'Health incidents can only be archived from the Symbiote Control Room.' }, 403);
@@ -790,6 +1095,85 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     if (method === 'GET' && pathname === '/api/config') {
       return json(res, control.getConfig());
     }
+    if (pathname === '/api/connectors') {
+      if (method !== 'GET') return json(res, { error: 'Use the connector-specific endpoints to change connector state.' }, 405);
+      if (!control.getConnectors) return json(res, { error: 'Connectors are unavailable in this runtime.' }, 503);
+      res.setHeader('Cache-Control', 'no-store');
+      return json(res, { connectors: control.getConnectors() });
+    }
+    const connectorConnect = matchRoute('/api/connectors/:id/connect', pathname);
+    if (method === 'POST' && connectorConnect) {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'Connector credentials can only be saved from the Symbiote Control Room.' }, 403);
+      if (!control.connectConnector) return json(res, { error: 'Connector authentication is unavailable in this runtime.' }, 503);
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 80_000) || '{}');
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Connector credentials must be valid JSON.' }, 400);
+      }
+      const credentials = body && typeof body === 'object' && !Array.isArray(body)
+        ? (body as { credentials?: unknown }).credentials
+        : undefined;
+      try {
+        return json(res, await control.connectConnector(decodeURIComponent(connectorConnect.id), credentials), 201);
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'The connector could not be connected.' }, 400);
+      }
+    }
+    const connectorDisconnect = matchRoute('/api/connectors/:id/disconnect', pathname);
+    if (method === 'POST' && connectorDisconnect) {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'Connectors can only be disconnected from the Symbiote Control Room.' }, 403);
+      if (!control.disconnectConnector) return json(res, { error: 'Connector management is unavailable in this runtime.' }, 503);
+      try {
+        await control.disconnectConnector(decodeURIComponent(connectorDisconnect.id));
+        return json(res, { disconnected: true });
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'The connector could not be disconnected.' }, 400);
+      }
+    }
+    if (pathname === '/api/connectors/permissions' && method === 'GET') {
+      if (!control.getConnectorPermissions) return json(res, { error: 'Connector permissions are unavailable in this runtime.' }, 503);
+      const agentId = url.searchParams.get('agentId') ?? 'main';
+      try {
+        return json(res, { agentId, permissions: control.getConnectorPermissions(agentId) });
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Connector permissions could not be loaded.' }, 400);
+      }
+    }
+    const connectorPermissions = matchRoute('/api/connectors/:id/permissions/:agentId', pathname);
+    if (method === 'PUT' && connectorPermissions) {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'Connector permissions can only be changed from the Symbiote Control Room.' }, 403);
+      if (!control.setConnectorCapabilities) return json(res, { error: 'Connector permissions are unavailable in this runtime.' }, 503);
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 20_000) || '{}');
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Connector permissions must be valid JSON.' }, 400);
+      }
+      const capabilities = body && typeof body === 'object' && !Array.isArray(body)
+        ? (body as { capabilities?: unknown }).capabilities
+        : undefined;
+      if (!Array.isArray(capabilities) || capabilities.some(value => typeof value !== 'string')) {
+        return json(res, { error: 'Connector permissions require a list of capability IDs.' }, 400);
+      }
+      try {
+        const connectorId = decodeURIComponent(connectorPermissions.id);
+        const agentId = decodeURIComponent(connectorPermissions.agentId);
+        control.setConnectorCapabilities(agentId, connectorId, capabilities);
+        return json(res, { agentId, connectorId, capabilities });
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Connector permissions could not be saved.' }, 400);
+      }
+    }
+    if (pathname === '/api/connectors/activity' && method === 'GET') {
+      if (!control.getConnectorActivity) return json(res, { error: 'Connector activity is unavailable in this runtime.' }, 503);
+      const parsedLimit = Number(url.searchParams.get('limit') ?? 100);
+      if (!Number.isSafeInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 500) {
+        return json(res, { error: 'Activity limit must be an integer from 1 to 500.' }, 400);
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return json(res, { activity: control.getConnectorActivity(parsedLimit) });
+    }
     if (method === 'GET' && pathname === '/api/integrations') {
       return json(res, { providers: control.getIntegrationStatus() });
     }
@@ -863,9 +1247,35 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         return json(res, { error: 'A body string and optional agent-ID mentions are required.' }, 400);
       }
       try {
-        return json(res, control.postThreadMessage(decodeURIComponent(threadPostRoute.id), value.body, value.mentions as string[] | undefined), 201);
+        const topicId = (body as { topicId?: unknown }).topicId;
+        if (topicId !== undefined && typeof topicId !== 'string') {
+          return json(res, { error: 'topicId must be a string.' }, 400);
+        }
+        return json(res, control.postThreadMessage(decodeURIComponent(threadPostRoute.id), value.body, value.mentions as string[] | undefined, topicId as string | undefined), 201);
       } catch (failure) {
         return json(res, { error: failure instanceof Error ? failure.message : 'Thread post could not be saved.' }, 400);
+      }
+    }
+    const threadTopicRoute = matchRoute('/api/threads/:id/topics', pathname);
+    if (method === 'POST' && threadTopicRoute) {
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 10_000) || '{}');
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Topic request must be valid JSON.' }, 400);
+      }
+      const value = body as { title?: unknown; reviewerAgentId?: unknown };
+      if (!value || typeof value !== 'object' || typeof value.title !== 'string'
+        || (value.reviewerAgentId !== undefined && typeof value.reviewerAgentId !== 'string')) {
+        return json(res, { error: 'A topic title and optional reviewer agent ID are required.' }, 400);
+      }
+      try {
+        return json(res, control.createThreadTopic(decodeURIComponent(threadTopicRoute.id), {
+          title: value.title,
+          ...(typeof value.reviewerAgentId === 'string' ? { reviewerAgentId: value.reviewerAgentId } : {}),
+        }), 201);
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Topic could not be created.' }, 400);
       }
     }
     const threadReadRoute = matchRoute('/api/threads/:id/read', pathname);
@@ -994,6 +1404,232 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         return json(res, { error: failure instanceof Error ? failure.message : 'Default agent prompt could not be saved.' }, 400);
       }
     }
+    if (pathname === '/api/integrations/mt5') {
+      if (method === 'GET') {
+        if (!control.getMt5Status) return json(res, { error: 'MetaTrader 5 is unavailable in this runtime.' }, 501);
+        res.setHeader('Cache-Control', 'no-store');
+        return json(res, control.getMt5Status());
+      }
+      if (method === 'POST') {
+        if (!isSameOriginRequest(req)) return json(res, { error: 'MetaTrader 5 credentials must be saved from the Control Room.' }, 403);
+        let body: unknown;
+        try {
+          body = JSON.parse(await readBody(req, 5_000) || '{}');
+        } catch (failure) {
+          return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 credentials must be valid JSON.' }, 400);
+        }
+        try {
+          if (!control.saveMt5Credentials) return json(res, { error: 'MetaTrader 5 is unavailable in this runtime.' }, 501);
+          control.saveMt5Credentials(body);
+          res.setHeader('Cache-Control', 'no-store');
+          return json(res, { configured: true });
+        } catch (failure) {
+          return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 credentials could not be saved.' }, 400);
+        }
+      }
+      if (method === 'DELETE') {
+        if (!isSameOriginRequest(req)) return json(res, { error: 'MetaTrader 5 credentials must be removed from the Control Room.' }, 403);
+        control.deleteMt5Credentials?.();
+        return json(res, { configured: Boolean(control.getMt5Status?.().configured) });
+      }
+    }
+    if (method === 'PUT' && pathname === '/api/integrations/mt5/terminal') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'MetaTrader 5 terminal settings must be saved from the Control Room.' }, 403);
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 5_000) || '{}');
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Terminal settings must be valid JSON.' }, 400);
+      }
+      const terminalPath = body && typeof body === 'object' && !Array.isArray(body)
+        ? (body as { terminalPath?: unknown }).terminalPath
+        : undefined;
+      if (typeof terminalPath !== 'string' || !terminalPath.trim()) {
+        return json(res, { error: 'A MetaTrader 5 terminal executable path is required.' }, 400);
+      }
+      try {
+        if (!control.saveMt5TerminalPath) return json(res, { error: 'MetaTrader 5 terminal configuration is unavailable in this runtime.' }, 501);
+        control.saveMt5TerminalPath(terminalPath);
+        return json(res, control.getMt5Status?.() ?? { configured: false });
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 terminal path could not be saved.' }, 400);
+      }
+    }
+    if (method === 'POST' && pathname === '/api/integrations/mt5/launch') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'MetaTrader 5 must be launched from the Control Room.' }, 403);
+      try {
+        if (!control.launchMt5Terminal) return json(res, { error: 'MetaTrader 5 terminal launch is unavailable in this runtime.' }, 501);
+        return json(res, await control.launchMt5Terminal());
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 terminal could not be launched.' }, 500);
+      }
+    }
+    if (method === 'POST' && pathname === '/api/integrations/mt5/test') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'MetaTrader 5 connection tests must be requested from the Control Room.' }, 403);
+      let symbol = '';
+      try {
+        const body = JSON.parse(await readBody(req, 2_000) || '{}') as { symbol?: unknown };
+        if (body && typeof body === 'object' && typeof body.symbol === 'string') symbol = body.symbol.trim();
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 test request must be valid JSON.' }, 400);
+      }
+      try {
+        if (!control.testMt5Connection) return json(res, { error: 'MetaTrader 5 is unavailable in this runtime.' }, 501);
+        return json(res, await control.testMt5Connection(symbol || undefined));
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 connection test failed.' }, 502);
+      }
+    }
+    if (method === 'GET' && pathname === '/api/integrations/mt5/positions') {
+      try {
+        if (!control.getMt5Positions) return json(res, { error: 'MetaTrader 5 is unavailable in this runtime.' }, 501);
+        res.setHeader('Cache-Control', 'no-store');
+        return json(res, await control.getMt5Positions());
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 positions could not be loaded.' }, 502);
+      }
+    }
+    if (method === 'GET' && pathname === '/api/integrations/mt5/journal') {
+      if (!control.getMt5TradeJournal) return json(res, { error: 'MetaTrader 5 trade journaling is unavailable in this runtime.' }, 503);
+      const requestedLimit = Number(url.searchParams.get('limit') ?? 100);
+      const limit = Number.isFinite(requestedLimit) ? Math.min(500, Math.max(1, Math.floor(requestedLimit))) : 100;
+      res.setHeader('Cache-Control', 'no-store');
+      return json(res, control.getMt5TradeJournal(limit));
+    }
+    if (method === 'POST' && pathname === '/api/integrations/mt5/journal/sync') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'Trade history can only be synchronized from the Control Room.' }, 403);
+      if (!control.syncMt5TradeJournal) return json(res, { error: 'MetaTrader 5 trade journaling is unavailable in this runtime.' }, 503);
+      try {
+        return json(res, { synced: await control.syncMt5TradeJournal() });
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader trade history could not be synchronized.' }, 502);
+      }
+    }
+    if (method === 'POST' && pathname === '/api/integrations/mt5/order') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'MetaTrader 5 orders must be submitted from the Control Room.' }, 403);
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 5_000) || '{}');
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 order must be valid JSON.' }, 400);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, { error: 'MetaTrader 5 order must be a JSON object.' }, 400);
+      const input = body as Record<string, unknown>;
+      if (typeof input.symbol !== 'string' || (input.side !== 'buy' && input.side !== 'sell') || typeof input.volume !== 'number') {
+        return json(res, { error: 'Order requires a symbol, buy/sell side and numeric volume.' }, 400);
+      }
+      if (input.stopLoss !== undefined && typeof input.stopLoss !== 'number') return json(res, { error: 'Stop loss must be numeric.' }, 400);
+      if (input.takeProfit !== undefined && typeof input.takeProfit !== 'number') return json(res, { error: 'Take profit must be numeric.' }, 400);
+      try {
+        if (!control.placeMt5Order) return json(res, { error: 'MetaTrader 5 is unavailable in this runtime.' }, 501);
+        return json(res, await control.placeMt5Order({
+          symbol: input.symbol,
+          side: input.side,
+          volume: input.volume,
+          ...(typeof input.stopLoss === 'number' ? { stopLoss: input.stopLoss } : {}),
+          ...(typeof input.takeProfit === 'number' ? { takeProfit: input.takeProfit } : {}),
+        }), 201);
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 order failed.' }, 502);
+      }
+    }
+    const mt5Close = matchRoute('/api/integrations/mt5/positions/:ticket/close', pathname);
+    if (method === 'POST' && mt5Close) {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'MetaTrader 5 position actions must be requested from the Control Room.' }, 403);
+      const ticket = Number(mt5Close.ticket);
+      try {
+        if (!control.closeMt5Position) return json(res, { error: 'MetaTrader 5 is unavailable in this runtime.' }, 501);
+        return json(res, await control.closeMt5Position(ticket));
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 position could not be closed.' }, 502);
+      }
+    }
+    const mt5Modify = matchRoute('/api/integrations/mt5/positions/:ticket', pathname);
+    if (method === 'PATCH' && mt5Modify) {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'MetaTrader 5 position actions must be requested from the Control Room.' }, 403);
+      const ticket = Number(mt5Modify.ticket);
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 2_000) || '{}');
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Position protection update must be valid JSON.' }, 400);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, { error: 'Position protection update must be a JSON object.' }, 400);
+      const input = body as Record<string, unknown>;
+      if (input.stopLoss !== undefined && typeof input.stopLoss !== 'number') return json(res, { error: 'Stop loss must be numeric.' }, 400);
+      if (input.takeProfit !== undefined && typeof input.takeProfit !== 'number') return json(res, { error: 'Take profit must be numeric.' }, 400);
+      try {
+        if (!control.modifyMt5Position) return json(res, { error: 'MetaTrader 5 is unavailable in this runtime.' }, 501);
+        return json(res, await control.modifyMt5Position(
+          ticket,
+          typeof input.stopLoss === 'number' ? input.stopLoss : undefined,
+          typeof input.takeProfit === 'number' ? input.takeProfit : undefined,
+        ));
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'MetaTrader 5 position could not be modified.' }, 502);
+      }
+    }
+    if (pathname === '/api/integrations/binance') {
+      if (method === 'GET') {
+        if (!control.getBinanceStatus) return json(res, { error: 'Binance is unavailable in this runtime.' }, 501);
+        res.setHeader('Cache-Control', 'no-store');
+        return json(res, control.getBinanceStatus());
+      }
+      if (method === 'POST') {
+        if (!isSameOriginRequest(req)) return json(res, { error: 'Binance credentials must be saved from the Control Room.' }, 403);
+        let body: unknown;
+        try {
+          body = JSON.parse(await readBody(req, 5_000) || '{}');
+        } catch (failure) {
+          return json(res, { error: failure instanceof Error ? failure.message : 'Binance credentials must be valid JSON.' }, 400);
+        }
+        try {
+          if (!control.saveBinanceCredentials) return json(res, { error: 'Binance is unavailable in this runtime.' }, 501);
+          control.saveBinanceCredentials(body);
+          return json(res, { configured: true });
+        } catch (failure) {
+          return json(res, { error: failure instanceof Error ? failure.message : 'Binance credentials could not be saved.' }, 400);
+        }
+      }
+      if (method === 'DELETE') {
+        if (!isSameOriginRequest(req)) return json(res, { error: 'Binance credentials must be removed from the Control Room.' }, 403);
+        control.deleteBinanceCredentials?.();
+        return json(res, { configured: Boolean(control.getBinanceStatus?.().configured) });
+      }
+    }
+    if (method === 'POST' && pathname === '/api/integrations/binance/test') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'Binance connection tests must be requested from the Control Room.' }, 403);
+      try {
+        if (!control.testBinanceConnection) return json(res, { error: 'Binance is unavailable in this runtime.' }, 501);
+        return json(res, await control.testBinanceConnection());
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Binance connection test failed.' }, 502);
+      }
+    }
+    if (method === 'POST' && pathname === '/api/integrations/binance/order') {
+      if (!isSameOriginRequest(req)) return json(res, { error: 'Binance orders must be submitted from the Control Room.' }, 403);
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 5_000) || '{}');
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Binance order must be valid JSON.' }, 400);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, { error: 'Binance order must be a JSON object.' }, 400);
+      const input = body as Record<string, unknown>;
+      if (typeof input.symbol !== 'string' || (input.side !== 'buy' && input.side !== 'sell') || typeof input.quantity !== 'number') {
+        return json(res, { error: 'Order requires a trading-pair symbol, buy/sell side and numeric quantity.' }, 400);
+      }
+      try {
+        if (!control.placeBinanceMarketOrder) return json(res, { error: 'Binance is unavailable in this runtime.' }, 501);
+        return json(res, await control.placeBinanceMarketOrder({
+          symbol: input.symbol,
+          side: input.side,
+          quantity: input.quantity,
+        }), 201);
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Binance market order failed.' }, 502);
+      }
+    }
     const integrationRoute = matchRoute('/api/integrations/:provider', pathname);
     if (integrationRoute && isIntegrationProvider(integrationRoute.provider)) {
       const provider = integrationRoute.provider;
@@ -1090,6 +1726,17 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     if (method === 'GET' && pathname === '/api/sessions') {
       return json(res, control.getSessions());
     }
+    const sessionLabel = matchRoute('/api/sessions/:id/label', pathname);
+    if (method === 'PUT' && sessionLabel) {
+      if (!control.setSessionLabel) return json(res, { error: 'Conversation renaming is unavailable.' }, 501);
+      const body = JSON.parse(await readBody(req) || '{}') as { label?: unknown };
+      if (typeof body.label !== 'string' || !body.label.trim() || body.label.trim().length > 80) {
+        return json(res, { error: 'Conversation names must contain 1-80 characters.' }, 400);
+      }
+      return control.setSessionLabel(decodeURIComponent(sessionLabel.id), body.label.trim())
+        ? json(res, { renamed: true })
+        : json(res, { error: 'Conversation was not found or could not be renamed.' }, 404);
+    }
     if (method === 'POST' && pathname === '/api/sessions/memory/ensure') {
       if (!control.ensureMemorySession) return json(res, { error: 'Memory conversation initialization is unavailable.' }, 501);
       try {
@@ -1104,6 +1751,14 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         return json(res, control.ensureGammaHeartbeatSession());
       } catch (failure) {
         return json(res, { error: failure instanceof Error ? failure.message : 'Gamma heartbeat conversation could not be initialized.' }, 400);
+      }
+    }
+    if (method === 'POST' && pathname === '/api/sessions/markets/ensure') {
+      if (!control.ensureMarketsSession) return json(res, { error: 'Markets conversation initialization is unavailable.' }, 501);
+      try {
+        return json(res, control.ensureMarketsSession());
+      } catch (failure) {
+        return json(res, { error: failure instanceof Error ? failure.message : 'Markets conversation could not be initialized.' }, 500);
       }
     }
     if (method === 'GET' && pathname === '/api/memory/graph') {
@@ -1233,13 +1888,13 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         name,
         prompt: body.prompt.trim(),
         sessionId,
-        trustedAdminContext: isTrustedLocalOperatorRequest(req),
+        trustedAdminContext: isTrustedOperatorRequest(req, control.webAccessToken),
         ...(typeof body.googleWorkspaceAccessToken === 'string' ? { googleWorkspaceAccessToken: body.googleWorkspaceAccessToken } : {}),
       }), 201);
     }
     const restartRunAction = matchRoute('/api/runs/:id/restart', pathname);
     if (method === 'POST' && restartRunAction) {
-      const run = control.restartRun(decodeURIComponent(restartRunAction.id), isTrustedLocalOperatorRequest(req));
+      const run = control.restartRun(decodeURIComponent(restartRunAction.id), isTrustedOperatorRequest(req, control.webAccessToken));
       return run ? json(res, run, 201) : json(res, { error: 'Run cannot be restarted because it is missing or still active.' }, 409);
     }
     const guideRunAction = matchRoute('/api/runs/:id/guide', pathname);
@@ -1251,7 +1906,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       if (body.message.length > 2_000) {
         return json(res, { error: 'Guidance messages must be 2,000 characters or fewer.' }, 413);
       }
-      const run = control.guideRun(decodeURIComponent(guideRunAction.id), body.message.trim(), isTrustedLocalOperatorRequest(req));
+      const run = control.guideRun(decodeURIComponent(guideRunAction.id), body.message.trim(), isTrustedOperatorRequest(req, control.webAccessToken));
       return run ? json(res, run, 202) : json(res, { error: 'Task could not be guided because its run or session is unavailable.' }, 409);
     }
     if (method === 'GET' && pathname === '/api/agents') {
@@ -1695,7 +2350,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         senderId: 'webapp-local',
         senderName: 'You',
         source: 'webapp',
-        trustedAdminContext: isTrustedLocalOperatorRequest(req),
+        trustedAdminContext: isTrustedOperatorRequest(req, control.webAccessToken),
         ...(typeof body.googleWorkspaceAccessToken === 'string' ? { googleWorkspaceAccessToken: body.googleWorkspaceAccessToken } : {}),
         }, emit);
         emit({ type: 'done', result });
@@ -1862,10 +2517,13 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   // ── Static Files ───────────────────────────────────────────────────────
 
   if (method === 'GET') {
+    if (pathname === '/native' || pathname === '/native/' || pathname === '/native/index.html') {
+      return serveStatic(res, NATIVE_WEB_UI_FILE);
+    }
     if (pathname === '/' || pathname === '/index.html') {
       const appIndex = path.join(WEBAPP_DIR, 'index.html');
       if (fs.existsSync(appIndex)) return serveStatic(res, appIndex);
-      return serveStatic(res, path.join(LEGACY_WEB_DIR, 'index.html'));
+      return serveStatic(res, NATIVE_WEB_UI_FILE);
     }
     // Serve other static files
     const safePath = path.normalize(pathname).replace(/^(\.\.[\/\\])+/, '');
@@ -1891,8 +2549,13 @@ function formatUptime(ms: number): string {
 
 // ── Server ─────────────────────────────────────────────────────────────────
 
-export function startWebServer(port = 3006, host = '127.0.0.1', control?: WebControlPlane): http.Server {
-  const server = http.createServer((req, res) => {
+export function startWebServer(
+  port = 3006,
+  host = '127.0.0.1',
+  control?: WebControlPlane,
+  additionalHosts: readonly string[] = [],
+): http.Server {
+  const handle = (req: http.IncomingMessage, res: http.ServerResponse) => {
     handleRequest(req, res, control).catch(err => {
       control?.recordGatewayIssue?.('web-api', err instanceof Error ? err.message : String(err));
       console.error(`${palette.dim}  [symbiote-web]${palette.reset}`, err);
@@ -1900,6 +2563,21 @@ export function startWebServer(port = 3006, host = '127.0.0.1', control?: WebCon
         json(res, { error: 'Internal server error' }, 500);
       }
     });
+  };
+  const createServer = () => {
+    const listener = http.createServer(handle);
+    listener.on('error', error => {
+      control?.recordGatewayIssue?.('web-server', error.message);
+      console.error('[symbiote-web] Server error:', error);
+    });
+    return listener;
+  };
+  const server = createServer();
+  const additionalServers: http.Server[] = [];
+  server.on('close', () => {
+    for (const additionalServer of additionalServers) {
+      if (additionalServer.listening) additionalServer.close();
+    }
   });
 
   // Create a default session
@@ -1916,10 +2594,16 @@ export function startWebServer(port = 3006, host = '127.0.0.1', control?: WebCon
 
   server.listen(port, host, () => {
     console.log(ok(`Web UI → ${palette.cyan}http://${host}:${port}${palette.reset}`));
-  });
-  server.on('error', error => {
-    control?.recordGatewayIssue?.('web-server', error.message);
-    console.error('[symbiote-web] Server error:', error);
+    const address = server.address();
+    const listeningPort = address && typeof address !== 'string' ? address.port : port;
+    for (const additionalHost of new Set(additionalHosts)) {
+      if (!additionalHost || additionalHost === host) continue;
+      const additionalServer = createServer();
+      additionalServers.push(additionalServer);
+      additionalServer.listen(listeningPort, additionalHost, () => {
+        console.log(ok(`Web UI → ${palette.cyan}http://${additionalHost}:${listeningPort}${palette.reset}`));
+      });
+    }
   });
 
   return server;

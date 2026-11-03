@@ -193,6 +193,12 @@ export function importMemoGraphSnapshots(
           memoryDomain: domain,
           memoryScope: scope,
           memoryOwner: shard.owner ?? '',
+          memoryType: relations.size > 0
+            ? 'relational'
+            : (shard.content_type ?? 'CONVERSATIONAL').toUpperCase() === 'CONVERSATIONAL'
+              ? 'episodic'
+              : 'semantic',
+          sourceRef: `${graphId}:${shardHash}`,
           memoryPermissions: JSON.stringify(shard.permissions ?? []),
           memoryParentHash: shard.parent_hash ?? '',
           memoryRelations: JSON.stringify([...relations].map(hash => `memograph:${graphId}:${hash}`)),

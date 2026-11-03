@@ -1,8 +1,37 @@
 # Changelog
 
+## v5.7.0 (2026-11-02) — Apex
+
+Full release notes: [RELEASE_NOTES_v5.7.0.md](docs/releases/RELEASE_NOTES_v5.7.0.md)
+
+### Added
+- A faster, staged startup: the Gateway signals core readiness before Gamma starts integrations, channels, memory, market-data, and self-improvement initialization concurrently; Electron shows an animated startup and recovery screen, and heavy webapp views load on demand.
+- A deterministic, 1,000-particle hero orb with transitions across idle, thinking, executing, and responding states, plus a responsive 3D Memory graph with clustered nodes.
+- A first-class connector engine with REST and MCP adapters, an initial catalog for GitHub, Notion, Slack, Figma, and Canva, encrypted credential storage, per-agent capability grants, health checks, and execution history.
+- An agent-enabled Markets workspace with public price/history feeds, persistent chart drawings and indicators, dedicated chat and voice input, plus an optional MetaTrader 5 bridge.
+- OpenSky aircraft data and additional public intelligence and market sources through the resource aggregator.
+- Optional local neural memory using Ollama embeddings and a persistent HNSW index alongside lexical VDB retrieval.
+- Profile-driven hands-free voice activation, draft dictation with a trailing “send” command, and optional offline Vosk speech recognition.
+- FreeAI provider registration and provider/model discovery for interactive provider switching.
+- A gateway-supervised native recovery UI, production CI/CodeQL/release workflows, repository label automation, and desktop/mobile screenshots.
+- Admin-only n8n workflow operations and safer local-first n8n integration controls.
+
+### Changed
+- Refined the webapp, API registry, integrations, browser, IDE, maps, health, and Markets surfaces for more consistent layout and theming.
+- Improved short-recording speech recognition, profile-based wake-word matching, Windows project-terminal lifecycle handling, session continuity, and release packaging.
+
+### Fixed
+- Background initialization failures are reported without holding up core Gateway readiness; startup and recovery states are surfaced in the Electron UI.
+- Improved chart-state persistence and public data-source status handling.
+- Corrected the hero orb display size and removed its brightness control without changing global appearance settings.
+
+### Upgrade notes
+- No existing configuration migration is required. Connectors and neural memory are optional; connected services need their own credentials, and neural memory requires a locally installed Ollama embedding model.
+- Source checkouts should use `npm ci`, `npm --prefix webapp ci`, then `npm run build`.
+
 ## v5.6.2 (2026-10-29) — Apex
 
-Full release notes: [RELEASE_NOTES_v5.6.2.md](RELEASE_NOTES_v5.6.2.md)
+Full release notes: [RELEASE_NOTES_v5.6.2.md](docs/releases/RELEASE_NOTES_v5.6.2.md)
 
 ### Added
 - A manual update check in the Control Room with visible MSI download progress.
@@ -24,7 +53,7 @@ Full release notes: [RELEASE_NOTES_v5.6.2.md](RELEASE_NOTES_v5.6.2.md)
 
 ## v5.6.1 (2026-10-25) — Apex
 
-Full release notes: [RELEASE_NOTES_v5.6.1.md](RELEASE_NOTES_v5.6.1.md)
+Full release notes: [RELEASE_NOTES_v5.6.1.md](docs/releases/RELEASE_NOTES_v5.6.1.md)
 
 ### Fixed
 - **Repeated assistant responses:** completion review no longer runs after read-only tool calls, and internal review prompts and draft responses are excluded from persisted session history and checkpoints.
@@ -42,8 +71,6 @@ Full release notes: [RELEASE_NOTES_v5.6.1.md](RELEASE_NOTES_v5.6.1.md)
 - Run `npm ci` followed by `npm run build` when upgrading from a source checkout.
 
 ## v5.6.0 (2026-10-23) — Apex
-
-Full release notes: [RELEASE_NOTES_v5.6.0.md](RELEASE_NOTES_v5.6.0.md)
 
 ### Added
 - **HttpMcpBridge integration:** added support for remote n8n connections through the HttpMcpBridge, enhancing MCP server handling for external workflow orchestration.
@@ -69,20 +96,7 @@ Full release notes: [RELEASE_NOTES_v5.6.0.md](RELEASE_NOTES_v5.6.0.md)
 - No configuration migration is required.
 - Run `npm ci` followed by `npm run build` when upgrading from a source checkout.
 
-## Unreleased (2026-10-22)
-
-### Added
-- **n8n operations:** added the admin-only `n8n_workflow` tool for workflow lifecycle and execution history, with bounded paging, input validation, safe defaults for execution data, and explicit publish/retry operations.
-- **Integrations UI:** added n8n connection-source details, read-only testing, encrypted endpoint overrides with local `.env` fallback, and an on-demand local editor embed with a new-tab fallback.
-
-### Changed
-- Updated n8n setup and operations guidance to clarify that Schedule Trigger workflows must be published, arbitrary manual execution is not available through the public REST API, and execution retries can repeat external side effects.
-- n8n connection metadata is exposed without returning credentials; n8n workflow tools remain hidden from and denied to non-admin sessions.
-- A clean production build refreshes `dist` and `webapp/dist`; rebuild the Windows MSI to package updated application assets and the root release changelog.
-
 ## v5.5.0 (2026-10-17) — Apex
-
-Full release notes: [RELEASE_NOTES_v5.5.0.md](RELEASE_NOTES_v5.5.0.md)
 
 ### Added
 - **Control Room and desktop:** rebuilt the live web dashboard and Electron shell, with runtime health/setup, live uptime, and dedicated project, IDE, integrations, cron, threads, games, and memory views.
@@ -112,8 +126,6 @@ Full release notes: [RELEASE_NOTES_v5.5.0.md](RELEASE_NOTES_v5.5.0.md)
 - Rebuild source installations with `npm ci` followed by `npm run build`.
 
 ## v5.3.0 (2026-10-12) — Apex
-
-Full release notes: [RELEASE_NOTES_v5.3.0.md](RELEASE_NOTES_v5.3.0.md)
 
 ### Added
 - **Ops Memory:** a separate bounded operational-history store records coarse metadata from completed tool executions after delivery. It stores no command text, arguments, output bodies, or user messages; observations are workspace-scoped, deduplicated, capped, and expire by category.
@@ -149,7 +161,7 @@ Full release notes: [RELEASE_NOTES_v5.3.0.md](RELEASE_NOTES_v5.3.0.md)
 
 ## v5.2.0 (2026-10-10) — Apex
 
-Full notes are superseded by the current [v5.3.0 release notes](RELEASE_NOTES_v5.3.0.md); this section preserves the v5.2.0 release summary.
+Full notes are superseded by the v5.3.0 summary above; this section preserves the v5.2.0 release summary.
 
 ### Added
 - Curator tool-bug detection (v5.1): per-tool failure windows, minor/major classification, retry/timeout/fallback proposals

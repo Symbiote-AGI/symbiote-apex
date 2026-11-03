@@ -30,6 +30,8 @@ export type SessionTier = 'admin' | 'standard' | 'restricted';
 
 export interface SessionContext {
   sessionId: string;
+  agentId?: string;
+  allowedConnectorToolNames?: readonly string[];
   adapterId: string;       // e.g. 'discord-main', 'whatsapp-main'
   channelType: string;      // 'discord' | 'whatsapp'
   chatType: 'direct' | 'group';
@@ -348,7 +350,9 @@ export class SandboxedToolRegistry {
 
   /** Proxy: list all tools (but may filter for restricted sessions) */
   list(): Array<{ name: string; description: string; parameters: any; idempotency?: ToolDefinition['idempotency'] }> {
-    const all = this.inner.list();
+    const all = this.inner.list().filter(tool =>
+      !tool.connectorId || this.ctx.allowedConnectorToolNames?.includes(tool.name) === true,
+    );
     if (this.tier !== 'admin') {
       const visibleToNonAdmin = all.filter(t =>
         t.name !== 'computer_use' && t.name !== 'workspace_manage'
@@ -374,6 +378,10 @@ export class SandboxedToolRegistry {
 
   /** Execute with sandbox enforcement */
   async execute(name: string, input: Record<string, unknown>, options?: ToolExecuteOptions): Promise<string> {
+    const definition = this.inner.list().find(tool => tool.name === name);
+    if (definition?.connectorId && this.ctx.allowedConnectorToolNames?.includes(name) !== true) {
+      return JSON.stringify({ error: `Connector capability is not authorized for this agent: ${name}`, sandbox: true });
+    }
     const denial = this.validate(name, input);
     if (denial) return JSON.stringify({ error: denial, sandbox: true });
     if (name === 'computer_use' && this.tier !== 'admin') {
@@ -412,11 +420,16 @@ export class SandboxedToolRegistry {
     return this.inner.execute(name, scopedInput, {
       ...options,
       sessionId: this.ctx.sessionId,
+      ...(this.ctx.agentId ? { agentId: this.ctx.agentId } : {}),
       sessionTier: this.tier,
     });
   }
 
   async executeWithImages(name: string, input: Record<string, unknown>, options?: ToolExecuteOptions): Promise<ToolExecutionOutput> {
+    const definition = this.inner.list().find(tool => tool.name === name);
+    if (definition?.connectorId && this.ctx.allowedConnectorToolNames?.includes(name) !== true) {
+      return { text: JSON.stringify({ error: `Connector capability is not authorized for this agent: ${name}`, sandbox: true }), isError: true };
+    }
     const denial = this.validate(name, input);
     if (denial) return { text: JSON.stringify({ error: denial, sandbox: true }), isError: true };
     if (name === 'computer_use' && this.tier !== 'admin') {
@@ -450,7 +463,12 @@ export class SandboxedToolRegistry {
       && typeof scopedInput.workdir !== 'string') {
       scopedInput.workdir = this.ctx.workspaceRoot;
     }
-    const executionOptions = { ...options, sessionId: this.ctx.sessionId, sessionTier: this.tier };
+    const executionOptions = {
+      ...options,
+      sessionId: this.ctx.sessionId,
+      ...(this.ctx.agentId ? { agentId: this.ctx.agentId } : {}),
+      sessionTier: this.tier,
+    };
     if (this.inner.executeWithImages) return this.inner.executeWithImages(name, scopedInput, executionOptions);
     return { text: await this.inner.execute(name, scopedInput, executionOptions) };
   }

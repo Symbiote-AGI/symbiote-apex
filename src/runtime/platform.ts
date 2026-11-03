@@ -192,7 +192,7 @@ export function shellCommand(command: string, login = false, kind: ShellKind = '
 }
 
 /** Start a long-lived shell whose commands can be sent through stdin. */
-export function interactiveShellCommand(kind: ShellKind = 'auto'): { file: string; args: string[] } {
+export function interactiveShellCommand(kind: ShellKind = 'auto'): { file: string; args: string[]; readyMarker?: string } {
   const resolved = kind === 'auto' ? (isWindows() ? 'powershell' : 'bash') : kind;
   if (resolved === 'bash') {
     const bash = findBash();
@@ -201,7 +201,12 @@ export function interactiveShellCommand(kind: ShellKind = 'auto'): { file: strin
   }
   if (isWindows()) {
     if (resolved === 'cmd') return { file: process.env.COMSPEC ?? 'cmd.exe', args: ['/d', '/q', '/k'] };
-    return { file: windowsShell(), args: ['-NoLogo', '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass'] };
+    const readyMarker = '__SYMBIOTE_TERMINAL_READY__';
+    return {
+      file: windowsShell(),
+      args: ['-NoLogo', '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', `[Console]::Write('${readyMarker}')`],
+      readyMarker,
+    };
   }
   return { file: process.env.SYMBIOTE_SHELL ?? process.env.SHELL ?? 'sh', args: ['-i'] };
 }
@@ -217,13 +222,13 @@ export function describeShell(): string {
 }
 
 /** Kill a child and its whole process tree. */
-export function killProcessTree(proc: ChildProcess, signal: NodeJS.Signals = 'SIGKILL'): void {
-  if (!proc.pid) return;
+export function killProcessTree(proc: ChildProcess, signal: NodeJS.Signals = 'SIGKILL'): ChildProcess | undefined {
+  if (!proc.pid) return undefined;
   if (isWindows()) {
-    spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true });
-    return;
+    return spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true });
   }
   try { proc.kill(signal); } catch { /* already dead */ }
+  return undefined;
 }
 
 export function wrapPtyCommand(command: string): string {
@@ -268,6 +273,21 @@ export function pythonCommandWithRequiredModule(scriptPath: string, requiredModu
 
 function windowsPythonCandidates(): Array<{ file: string; args: string[] }> {
   const candidates: Array<{ file: string; args: string[] }> = [];
+  const windowsAppsPath = `${path.sep}WindowsApps${path.sep}`.toLowerCase();
+  const addCandidate = (file: string) => {
+    const candidate = file.trim();
+    if (!candidate || candidate.toLowerCase().includes(windowsAppsPath)) return;
+    candidates.push({ file: candidate, args: [] });
+  };
+  const pathPython = spawnSync('where.exe', ['python'], {
+    encoding: 'utf-8',
+    timeout: 5_000,
+    windowsHide: true,
+  });
+  for (const file of (pathPython.stdout ?? '').split(/\r?\n/).filter(Boolean)) {
+    addCandidate(file);
+  }
+
   const launcher = spawnSync('py', ['-0p'], {
     encoding: 'utf-8',
     timeout: 5_000,
@@ -275,16 +295,7 @@ function windowsPythonCandidates(): Array<{ file: string; args: string[] }> {
   });
   for (const line of (launcher.stdout ?? '').split(/\r?\n/)) {
     const match = line.match(/^\s*-V:\S+(?:\s+\*)?\s{2,}(.+?)\s*$/);
-    if (match) candidates.push({ file: match[1], args: [] });
-  }
-
-  const pathPython = spawnSync('where.exe', ['python'], {
-    encoding: 'utf-8',
-    timeout: 5_000,
-    windowsHide: true,
-  });
-  for (const file of (pathPython.stdout ?? '').split(/\r?\n/).filter(Boolean)) {
-    candidates.push({ file: file.trim(), args: [] });
+    if (match) addCandidate(match[1]);
   }
 
   const seen = new Set<string>();

@@ -2,13 +2,13 @@
 
 The maintained, full release history and upgrade notes are in the repository [CHANGELOG.md](../../CHANGELOG.md).
 
-## Unreleased (2026-10-22)
+## v5.7.0 — Connectors, Markets, and Neural Memory (2026-11-02)
 
-The n8n integration now includes an admin-only `n8n_workflow` tool, a local-first Integrations card with encrypted remote overrides, safe connection-source metadata, and a lazily loaded local editor. Documentation clarifies publishing scheduled workflows, the lack of a general manual-run REST endpoint, retry side effects, and the rebuild needed to update the Windows MSI.
+See the [v5.7.0 release notes](../releases/RELEASE_NOTES_v5.7.0.md) for the full feature list and upgrade guidance. This release adds the connector engine, agent-enabled Markets workspace, optional local neural memory, public resource aggregation, provider discovery, and a gateway-supervised recovery UI.
 
 ## v5.3.0 — Operational Memory and Runtime Reliability (2026-10-12)
 
-See the [v5.3.0 release notes](../../RELEASE_NOTES_v5.3.0.md) for upgrade instructions and the full feature list. This release adds bounded, privacy-preserving operational history; makes Windows shell outcomes and path failures clearer; and keeps Discord progress updates within API limits while redacting sensitive previews.
+See the [root changelog](../../CHANGELOG.md) for the v5.3.0 upgrade instructions and full feature list. This release adds bounded, privacy-preserving operational history; makes Windows shell outcomes and path failures clearer; and keeps Discord progress updates within API limits while redacting sensitive previews.
 
 ## v5.2.0 — Admin Tools, Hardened Agent Loop (2026-10-10)
 

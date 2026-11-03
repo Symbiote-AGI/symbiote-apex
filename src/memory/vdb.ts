@@ -38,6 +38,14 @@ export interface VDBDocument {
   metadata?: Record<string, string>;
 }
 
+export interface VDBSearchFilter {
+  source?: string;
+  role?: string;
+  namespace?: string;
+  minTimestamp?: number;
+  metadata?: Record<string, string>;
+}
+
 interface StoredDocument extends VDBDocument {
   terms: string[];       // pre-tokenized for BM25
   tfidf: number[];       // sparse TF-IDF vector (indexed by global term position)
@@ -125,12 +133,18 @@ export class VectorDB {
 
   /** Index a document. Deduplicates by stable document identity and content. */
   index(doc: VDBDocument): boolean {
+    return this.indexAndGet(doc) !== undefined;
+  }
+
+  /** Index a document and return its persisted identity for derived indexes. */
+  indexAndGet(doc: VDBDocument): VDBDocument | undefined {
     this.ensureLoaded();
 
     const stored = this.addDocument(doc);
-    if (!stored) return false;
+    if (!stored) return undefined;
     this.appendDoc(stored);
-    return true;
+    const { terms: _terms, tfidf: _tfidf, ...document } = stored;
+    return document;
   }
 
   /** Replace a namespace atomically in the in-memory index and compact it to disk. */
@@ -328,13 +342,7 @@ export class VectorDB {
   }
 
   /** Hybrid search: BM25 + TF-IDF cosine. */
-  search(query: string, k = 5, filter?: {
-    source?: string;
-    role?: string;
-    namespace?: string;
-    minTimestamp?: number;
-    metadata?: Record<string, string>;
-  }): SearchResult[] {
+  search(query: string, k = 5, filter?: VDBSearchFilter): SearchResult[] {
     this.ensureLoaded();
     this.lastAccess = Date.now();
 
@@ -637,6 +645,10 @@ export function extractFromSession(sessionPath: string, source = 'whatsapp'): VD
         id: makeSessionDocumentId(indexText, sessionId, i, msg.role),
         text: indexText, source, role: msg.role,
         timestamp, sessionId, namespace: `session:${sessionId}`,
+        metadata: {
+          memoryType: 'episodic',
+          sourceRef: `session:${sessionId}:message:${i}`,
+        },
       });
     }
   } catch { /* corrupt */ }

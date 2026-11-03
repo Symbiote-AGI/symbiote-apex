@@ -137,6 +137,34 @@ async function resolveCopilotToken(): Promise<{ token: string; baseUrl: string }
   return { token, baseUrl: deriveBaseUrl(token) };
 }
 
+export async function discoverGitHubCopilotModels(): Promise<string[]> {
+  const { token, baseUrl } = await resolveCopilotToken();
+  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/models`, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+      'Editor-Version': 'vscode/1.96.2',
+      'User-Agent': 'GitHubCopilotChat/0.26.7',
+      'Copilot-Integration-Id': 'vscode-chat',
+      'Openai-Intent': 'conversation-panel',
+    },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub Copilot model discovery failed (HTTP ${response.status}).`);
+  }
+
+  const payload = await response.json() as { data?: unknown[]; models?: unknown[] };
+  const entries = Array.isArray(payload.data) ? payload.data : Array.isArray(payload.models) ? payload.models : [];
+  return [...new Set(entries.flatMap((entry): string[] => {
+    if (typeof entry === 'string') return [entry];
+    if (!entry || typeof entry !== 'object') return [];
+    const model = entry as Record<string, unknown>;
+    return typeof model.id === 'string' ? [model.id] : typeof model.name === 'string' ? [model.name] : [];
+  }))].slice(0, 500);
+}
+
 async function* streamCopilot(
   messages: Message[],
   tools: ToolDef[],

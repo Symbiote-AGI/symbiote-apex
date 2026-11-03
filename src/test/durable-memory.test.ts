@@ -83,3 +83,40 @@ test('durable offload rejects empty or oversized memories before writing', () =>
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('runtime manifest is stored as a separate versioned Memograph shard and indexed in its own namespace', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'symbiote-runtime-memograph-'));
+  try {
+    const workspace = path.join(root, 'workspace');
+    const graphDirectory = path.join(root, 'memograph');
+    const database = new VectorDB(workspace);
+    const memory = new DurableMemory(database, path.join(workspace, 'memory.jsonl'), graphDirectory);
+    const first = memory.syncRuntimeShard({ features: ['Spaces', 'vector memory'], agents: ['main'] });
+    const unchanged = memory.syncRuntimeShard({ features: ['Spaces', 'vector memory'], agents: ['main'] });
+    const second = memory.syncRuntimeShard({ features: ['Spaces', 'vector memory', 'public markets'], agents: ['main'] });
+
+    assert.equal(first.changed, true);
+    assert.equal(unchanged.changed, false);
+    assert.equal(second.changed, true);
+    assert.equal(first.indexed, true);
+    assert.equal(unchanged.indexed, false);
+    assert.equal(second.indexed, true);
+    const snapshot = JSON.parse(fs.readFileSync(path.join(graphDirectory, 'symbiote_runtime.json'), 'utf8')) as {
+      nodes: Record<string, { shard_hash: string; parent_hash: string | null }>;
+      edges: Record<string, string[]>;
+    };
+    assert.equal(Object.keys(snapshot.nodes).length, 2);
+    assert.equal(snapshot.nodes[second.shardHash].parent_hash, first.shardHash);
+    assert.deepEqual(snapshot.edges[first.shardHash], [second.shardHash]);
+    assert.equal(database.getDocument(`memograph:symbiote_runtime:${second.shardHash}`)?.metadata?.memoryVerified, 'true');
+
+    const importedDb = new VectorDB(path.join(root, 'imported-workspace'));
+    const imported = importMemoGraphSnapshots(importedDb, graphDirectory);
+    assert.equal(imported.indexed, 2);
+    assert.equal(imported.hashVerified, 2);
+    assert.equal(imported.hashMismatches, 0);
+    assert.ok(importedDb.listDocuments().every(document => document.namespace === 'memograph:symbiote_runtime:live:system:symbiote-runtime'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
