@@ -8,6 +8,7 @@ const { promisify } = require('node:util');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { stopLauncherManagedGateway } = require('./gateway-process.cjs');
 
 if (process.platform === 'win32') app.setAppUserModelId('com.artifactvirtual.symbiote');
 
@@ -494,6 +495,17 @@ async function stopGatewayProcess(pid, gateway) {
   }
 }
 
+async function stopLauncherGateway(gateway) {
+  await stopLauncherManagedGateway({
+    recordPath: gatewayProcessPath,
+    gateway,
+    isManagedProcess: managedGatewayProcess,
+    stopProcess: stopGatewayProcess,
+    isPortInUse: gatewayPortInUse,
+    log: logGatewaySupervisor,
+  });
+}
+
 function resolveNodeExecutable() {
   if (process.env.SYMBIOTE_NODE) return process.env.SYMBIOTE_NODE;
   const bundledNode = path.join(__dirname, '..', 'node.exe');
@@ -769,9 +781,7 @@ async function restartManagedGateway() {
     }
     if (launcherManagedGateway) {
       const gateway = activeGatewayConfig ?? await resolveGatewayConfig();
-      const liveStatus = await readGatewayJson(gateway, '/api/status');
-      if (Number.isInteger(liveStatus?.pid)) await stopGatewayProcess(liveStatus.pid, gateway);
-      fs.rmSync(gatewayProcessPath, { force: true });
+      await stopLauncherGateway(gateway);
       launcherManagedGateway = false;
     }
     if (gatewayChild && gatewayChild.exitCode === null) await stopManagedGateway();
@@ -818,7 +828,12 @@ function startGatewayMonitor() {
       gatewayRestartAttempts++;
       const delay = Math.min(1000 * (2 ** Math.min(gatewayRestartAttempts - 1, 6)), 60_000);
       logGatewaySupervisor(`Gateway health recovery attempt ${gatewayRestartAttempts} will restart with ${delay}ms backoff.`);
-      if (gatewayChild && gatewayChild.exitCode === null) await stopManagedGateway();
+      if (launcherManagedGateway) {
+        await stopLauncherGateway(gateway);
+        launcherManagedGateway = false;
+      } else if (gatewayChild && gatewayChild.exitCode === null) {
+        await stopManagedGateway();
+      }
       await new Promise(resolve => setTimeout(resolve, delay));
       await ensureGateway();
     } catch (error) {
@@ -1360,6 +1375,7 @@ ipcMain.on('desktop:hover', (event, hovering) => {
 });
 
 app.whenReady().then(() => {
+  logGatewaySupervisor(`Electron became ready pid=${process.pid} version=${process.versions.electron}; singleInstanceLock=${ownsSingleInstanceLock}.`);
   if (!ownsSingleInstanceLock) return;
   nativeTheme.themeSource = desktopTheme || 'system';
   try {

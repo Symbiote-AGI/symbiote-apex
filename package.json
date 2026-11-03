@@ -44,7 +44,7 @@
     "build:webapp": "npm --prefix webapp run build",
     "index:codebase": "node scripts/generate-codebase-index.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --test-concurrency=1 dist/test/*.test.js && npm run test:webapp",
+    "test": "node --test --test-concurrency=1 dist/test/*.test.js && npm run test:webapp && node --test --test-concurrency=1 desktop/*.test.cjs",
     "test:webapp": "tsx --test --test-concurrency=1 webapp/test/activity-orb-state.test.ts webapp/test/hero-orb-adaptive-controller.test.ts webapp/test/hero-orb-appearance.test.ts webapp/test/hero-orb-geometry.test.ts webapp/test/voice-recorder.test.ts webapp/test/voice-wake-word.test.ts",
     "check:release": "node scripts/verify-release-metadata.mjs",
     "start": "node scripts/start-desktop.mjs",

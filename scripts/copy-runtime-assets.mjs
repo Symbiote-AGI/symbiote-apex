@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import rcedit from 'rcedit';
+import { getBuildFingerprint } from './build-fingerprint.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, '..');
@@ -43,4 +44,8 @@ for (const filename of fs.readdirSync(sourceDir)) {
 fs.rmSync(bundledWebappDir, { recursive: true, force: true });
 fs.mkdirSync(path.dirname(bundledWebappDir), { recursive: true });
 fs.cpSync(builtWebappDir, bundledWebappDir, { recursive: true });
+fs.writeFileSync(
+  path.join(projectRoot, 'dist', '.symbiote-build-fingerprint'),
+  `${getBuildFingerprint(projectRoot)}\n`,
+);
 console.log('Copied runtime assets into dist.');

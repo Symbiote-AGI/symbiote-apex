@@ -1,10 +1,10 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getBuildFingerprint } from './build-fingerprint.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 if (Number(process.versions.node.split('.')[0]) < 20) {
@@ -14,53 +14,6 @@ const entry = path.join(root, 'dist', 'index.js');
 const gatewayEntry = path.join(root, 'dist', 'gateway', 'daemon.js');
 const desktopMain = path.join(root, 'desktop', 'main.cjs');
 const buildFingerprintPath = path.join(root, 'dist', '.symbiote-build-fingerprint');
-const sourceDirectories = [
-  'src',
-  path.join('webapp', 'src'),
-  path.join('webapp', 'public'),
-  'desktop',
-  'assets',
-];
-const sourceFiles = [
-  'package.json',
-  'package-lock.json',
-  'tsconfig.json',
-  path.join('webapp', 'package.json'),
-  path.join('webapp', 'package-lock.json'),
-  path.join('webapp', 'tsconfig.json'),
-  path.join('webapp', 'vite.config.ts'),
-  path.join('webapp', 'index.html'),
-  path.join('scripts', 'clean-build.mjs'),
-  path.join('scripts', 'copy-runtime-assets.mjs'),
-];
-
-function collectFiles(directory, files = []) {
-  for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
-    const itemPath = path.join(directory, item.name);
-    if (item.isDirectory()) collectFiles(itemPath, files);
-    else if (item.isFile()) files.push(itemPath);
-  }
-  return files;
-}
-
-function getBuildFingerprint() {
-  const files = sourceFiles
-    .filter(relativePath => fs.existsSync(path.join(root, relativePath)))
-    .map(relativePath => path.join(root, relativePath));
-  for (const directory of sourceDirectories) {
-    const absolutePath = path.join(root, directory);
-    if (fs.existsSync(absolutePath)) collectFiles(absolutePath, files);
-  }
-
-  const hash = crypto.createHash('sha256');
-  for (const file of files.sort()) {
-    hash.update(path.relative(root, file).replaceAll(path.sep, '/'));
-    hash.update('\0');
-    hash.update(fs.readFileSync(file));
-    hash.update('\0');
-  }
-  return hash.digest('hex');
-}
 
 function hasBuildOutputs() {
   const requiredFiles = [
@@ -214,7 +167,7 @@ stopPreviousInstances(installedGatewayService);
 
 const hasBuildSource = fs.existsSync(path.join(root, 'src', 'gateway', 'daemon.ts'))
   && fs.existsSync(path.join(root, 'tsconfig.json'));
-const currentFingerprint = hasBuildSource ? getBuildFingerprint() : null;
+const currentFingerprint = hasBuildSource ? getBuildFingerprint(root) : null;
 let previousFingerprint = '';
 try {
   previousFingerprint = fs.readFileSync(buildFingerprintPath, 'utf8').trim();
@@ -242,6 +195,7 @@ if (buildRequired && hasBuildSource) {
 const launchLog = path.join(root, '.session', 'desktop-launch.log');
 fs.mkdirSync(path.dirname(launchLog), { recursive: true });
 const logFd = fs.openSync(launchLog, 'w');
+fs.writeSync(logFd, `${new Date().toISOString()} Symbiote launcher starting from ${root}.\n`);
 const configPath = path.resolve(process.env.SYMBIOTE_CONFIG || path.join(root, 'symbiote.json'));
 const gatewayProcessPath = path.join(root, '.session', 'desktop-gateway-process.json');
 fs.rmSync(gatewayProcessPath, { force: true });
@@ -278,6 +232,7 @@ try {
       fs.renameSync(temporaryPath, gatewayProcessPath);
       await waitForGateway(gatewayChild, getGatewayHealthTarget(configPath));
       gatewayChild.unref();
+      fs.writeSync(logFd, `${new Date().toISOString()} Gateway became ready as PID ${gatewayChild.pid}.\n`);
       console.log(`Symbiote Gateway ready (PID ${gatewayChild.pid}); starting the optional desktop.`);
     } catch (error) {
       if (gatewayChild && gatewayChild.exitCode === null) gatewayChild.kill('SIGTERM');
@@ -309,6 +264,7 @@ try {
     child.once('error', reject);
     child.once('spawn', resolve);
   });
+  fs.appendFileSync(launchLog, `${new Date().toISOString()} Electron spawn succeeded as PID ${child.pid} using ${electronExecutable}.\n`);
   child.unref();
 } finally {
   fs.closeSync(logFd);
