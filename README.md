@@ -1,16 +1,15 @@
 <div align="center">
 
-# Symbiote
+<img src="assets/biohazard_white.ico" alt="Symbiote logo" width="64" height="64">
+
+# SYMBIOTE
 
 **Persistent AI agent runtime for any type of workspace.**
 
-[![Version](https://img.shields.io/badge/version-5.7.0-blue?style=flat-square)](https://github.com/Artifact-Virtual/symbiote/releases)
+[![Version](https://img.shields.io/badge/version-5.7.0-blue?style=flat-square)](https://github.com/artifact-opensource/symbiote/releases)
 [![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-project-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-4.9.5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![MIT License](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)](LICENSE) <br>
-[![CI](https://github.com/artifact-opensource/symbiote/actions/workflows/ci.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/artifact-opensource/symbiote/actions/workflows/codeql.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/codeql.yml)
-[![Build and release assets](https://github.com/artifact-opensource/symbiote/actions/workflows/release.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/release.yml)
 
 
 [Features](#persistent-intelligent-and-built-for-real-work) · [Quick start](#quick-start) · [Configuration](#configuration) · [Memory](#memory) · [CLI](#cli)
@@ -25,7 +24,7 @@ Symbiote is more than a chat interface around an LLM. It is a local-first agent 
 
 | Capability | What it gives you |
 |---|---|
-| **A persistent agent, not a disposable chat** | A gateway process connects your channels, preserves session state on disk, resumes eligible conversations after restarts, and keeps long-running work moving across iteration budgets. |
+| **A persistent agent** | A gateway process connects your channels, preserves session state on disk, resumes eligible conversations after restarts, and keeps long-running work moving across iteration budgets. |
 | **Memory with provenance and boundaries** | Embedded lexical retrieval, durable sessions, COMB continuity, and optional Memograph imports work together. A separate bounded Ops Memory records only coarse metadata about completed tool calls; it expires observations and labels them as historical evidence, never live status. |
 | **A tool-using runtime** | Built-in file, filesystem, shell, process, browser, web, hardware, memory, messaging, and sub-agent tools let the agent inspect and act in its configured environment. Tool execution is sequential within an iteration, results are checked, and failures are returned to the agent to guide a different approach. |
 | **Adaptive and self-evaluating behavior** | SARSI, PARC, Curator, MEA, and Meta^n support routing, outcome assessment, and controlled evaluation of proposed improvements without inserting extra model calls into the tool-execution loop. |
@@ -77,7 +76,7 @@ Provider APIs and optional channel services require their own credentials and ne
 **Requirements:** Node.js 20 or newer.
 
 ```bash
-git clone https://github.com/Artifact-Virtual/symbiote.git
+git clone https://github.com/artifact-opensource/symbiote.git
 cd symbiote
 npm install
 npm run build
@@ -126,7 +125,7 @@ A minimal `symbiote.json`:
 
 The default LLM request timeout is 15 minutes. `timeouts.llmRequestMs` and provider-specific `timeoutMs` values can override it. Provider retries preserve the configured timeout; authentication failures fail fast.
 
-The CLI and gateway register OpenRouter, Anthropic, OpenAI, Groq, Gemini, NVIDIA, xAI, GitHub Copilot, Ollama, Gladius, and FreeAI. A routed provider is used only when it is registered and configured; otherwise Symbiote uses the configured default provider. Supported providers can expose models through automatic discovery.
+The CLI and gateway register OpenRouter, Anthropic, OpenAI, Groq, Gemini, NVIDIA, xAI, GitHub Copilot, Ollama, Artifact Engine, Gladius, and FreeAI. A routed provider is used only when it is registered and configured; otherwise Symbiote uses the configured default provider. Supported providers can expose models through automatic discovery.
 
 ## Memory
 
@@ -134,7 +133,7 @@ The CLI and gateway register OpenRouter, Anthropic, OpenAI, Groq, Gemini, NVIDIA
 
 The native VDB is stored under `<workspace>/.vdb`. It persists JSONL documents and builds BM25 plus sparse TF-IDF indexes for hybrid lexical retrieval. Sessions are indexed incrementally; `memory_recall`, `memory_ingest`, and `memory_stats` are available in the gateway, CLI tool registry, and MCP server.
 
-The default VDB retrieval uses lexical BM25/TF-IDF signals, recency, and optional Memograph metadata. Optional neural memory adds local dense retrieval through Ollama embeddings and a persistent HNSW index, while preserving the original VDB records and lexical fallback. The example configuration uses `bge-m3`; `qwen3-embedding:8b` is also available as a larger model. See [Optional neural memory](docs/getting-started/configuration.md#optional-neural-memory).
+The default VDB retrieval uses lexical BM25/TF-IDF signals, recency, and optional Memograph metadata. Optional neural memory adds dense retrieval through Ollama or Artifact Engine embeddings and a persistent HNSW index, while preserving the original VDB records and lexical fallback. Artifact Engine must have an embedding-capable GGUF model loaded; it serves pooled final-layer hidden states through its OpenAI-compatible `/v1/embeddings` endpoint. See [Optional neural memory](docs/getting-started/configuration.md#optional-neural-memory).
 
 ### Operational continuity
 
@@ -205,3 +204,9 @@ Additional guides live in [`docs/`](docs/README.md). Start with [Quick Start](do
 ## License
 
 [MIT](LICENSE)
+
+---
+
+[![CI](https://github.com/artifact-opensource/symbiote/actions/workflows/ci.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/ci.yml) <br>
+[![CodeQL](https://github.com/artifact-opensource/symbiote/actions/workflows/codeql.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/codeql.yml) <br>
+[![Build and release assets](https://github.com/artifact-opensource/symbiote/actions/workflows/release.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/release.yml)

@@ -70,16 +70,16 @@ The setup flow writes every section below. Values shown are the defaults.
 
 ### Optional neural memory
 
-The lexical VDB remains available by default. To add local dense retrieval, install an Ollama embedding model and configure:
+The lexical VDB remains available by default. To add dense retrieval, use an embedding-capable model exposed by Artifact Engine (or retain an existing Ollama setup) and configure:
 
 ```json
 {
   "memory": {
     "neural": {
       "enabled": true,
-      "provider": "ollama",
-      "baseUrl": "http://127.0.0.1:11434",
-      "model": "bge-m3",
+      "provider": "artifact-engine",
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "model": "YOUR_LOADED_MODEL_ID",
       "lexicalWeight": 0.4,
       "denseWeight": 0.6,
       "temporalHalfLifeDays": 180
@@ -88,7 +88,9 @@ The lexical VDB remains available by default. To add local dense retrieval, inst
 }
 ```
 
-Run `ollama pull bge-m3` before enabling it. Set `model` to `qwen3-embedding:8b` to switch to the larger Qwen3 embedding model. Symbiote keeps the original VDB records and backfills a separate model-specific dense index; switching models does not discard lexical memories.
+Artifact Engine's model id is returned by `GET /v1/models`. Its local GGUF server provides embeddings by mean-pooling and L2-normalizing final-layer token states, so use a model designed or validated for embeddings; this is not equivalent to a dedicated embedding head. The existing Ollama endpoint remains supported for migrated configurations.
+
+For legacy Ollama deployments, set `provider` to `ollama`, use its server origin as `baseUrl`, and choose an installed embedding model such as `bge-m3`. Symbiote keeps the original VDB records and backfills a separate model-specific dense index; switching providers or models does not discard lexical memories.
 
 ### Environment Variable Interpolation
 
