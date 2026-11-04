@@ -8,4 +8,4 @@ site:
       path: mach6
       default: true
       content:
-        directory: ./docs
+        directory: ./
