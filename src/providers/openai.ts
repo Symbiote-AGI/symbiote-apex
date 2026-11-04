@@ -147,6 +147,10 @@ async function* streamOpenAI(
       if (delta.content && typeof delta.content === 'string') {
         yield { type: 'text_delta', text: delta.content };
       }
+      const reasoning = delta.reasoning_content ?? delta.reasoning;
+      if (typeof reasoning === 'string' && reasoning.length > 0) {
+        yield { type: 'thinking_delta', text: reasoning };
+      }
 
       // Tool calls
       const toolCalls = delta.tool_calls as Array<Record<string, unknown>> | undefined;

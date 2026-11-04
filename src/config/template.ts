@@ -86,9 +86,9 @@ export function buildConfigTemplate(input: TemplateInput = {}): Record<string, a
     memory: {
       neural: {
         enabled: false,
-        provider: 'ollama',
-        baseUrl: 'http://127.0.0.1:11434',
-        model: 'bge-m3',
+        provider: 'artifact-engine',
+        baseUrl: 'http://127.0.0.1:8080/v1',
+        model: 'YOUR_EMBEDDING_MODEL',
         timeoutMs: 120_000,
         lexicalWeight: 0.4,
         denseWeight: 0.6,
@@ -115,6 +115,7 @@ export function buildConfigTemplate(input: TemplateInput = {}): Record<string, a
       nvidia: { apiKey: envRef(PROVIDER_ENV.nvidia) },
       'github-copilot': {},
       ollama: { baseUrl: 'http://127.0.0.1:11434' },
+      'artifact-engine': { baseUrl: 'http://127.0.0.1:8080' },
       gladius: { baseUrl: 'http://127.0.0.1:8741' },
     },
 

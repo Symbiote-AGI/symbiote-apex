@@ -22,6 +22,7 @@ import { gladiusProvider } from './providers/gladius.js';
 import { groqProvider } from './providers/groq.js';
 import { nvidiaProvider } from './providers/nvidia.js';
 import { ollamaProvider } from './providers/ollama.js';
+import { artifactEngineProvider } from './providers/artifact-engine.js';
 import { xaiProvider } from './providers/xai.js';
 import { freeaiProvider } from './providers/freeai.js';
 import type { Provider, ProviderConfig } from './providers/types.js';
@@ -76,6 +77,7 @@ const providers = new Map<string, Provider>([
   ['groq', groqProvider],
   ['nvidia', nvidiaProvider],
   ['ollama', ollamaProvider],
+  ['artifact-engine', artifactEngineProvider],
   ['xai', xaiProvider],
   ['freeai', freeaiProvider],
 ]);

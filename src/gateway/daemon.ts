@@ -137,6 +137,7 @@ import { gladiusProvider } from '../providers/gladius.js';
 import { groqProvider } from '../providers/groq.js';
 import { openrouterProvider } from '../providers/openrouter.js';
 import { ollamaProvider } from '../providers/ollama.js';
+import { artifactEngineProvider } from '../providers/artifact-engine.js';
 import { xaiProvider } from '../providers/xai.js';
 import { freeaiProvider } from '../providers/freeai.js';
 import { discoverProviderModels } from '../providers/model-catalog.js';
@@ -262,6 +263,7 @@ const PROVIDERS = new Map<string, Provider>([
   ['openrouter', openrouterProvider],
   ['nvidia', nvidiaProvider],
   ['ollama', ollamaProvider],
+  ['artifact-engine', artifactEngineProvider],
   ['xai', xaiProvider],
   ['freeai', freeaiProvider],
 ]);
@@ -1468,7 +1470,7 @@ export class SymbioteGateway {
     return [...PROVIDERS.keys()].filter((providerName) => {
       const configured = this.config.providers[providerName];
       if (configured?.enabled === false) return false;
-      const localOrSessionAuth = ['freeai', 'github-copilot', 'ollama', 'gladius'].includes(providerName);
+      const localOrSessionAuth = ['freeai', 'github-copilot', 'ollama', 'artifact-engine', 'gladius'].includes(providerName);
       const hasApiKey = typeof configured?.apiKey === 'string' && configured.apiKey.trim().length > 0;
       return (providerName === this.providerName || configured !== undefined)
         && (providerName === this.providerName || localOrSessionAuth || hasApiKey);

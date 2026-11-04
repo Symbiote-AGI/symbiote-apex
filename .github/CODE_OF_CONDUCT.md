@@ -16,7 +16,7 @@ Harassment, discrimination, intimidation, personal attacks, sexualized conduct, 
 
 ## Reporting
 
-Report conduct concerns privately to [hello@artifactvirtual.com](mailto:hello@artifactvirtual.com) with the subject "Symbiote Code of Conduct". Please include what happened, where it occurred, and any context needed to review it. Do not use public issues for sensitive reports. For security vulnerabilities, follow the separate process in [SECURITY.md](../SECURITY.md).
+Report conduct concerns privately to [info@artifactvirtual.com](mailto:info@artifactvirtual.com) with the subject "Symbiote Code of Conduct". Please include what happened, where it occurred, and any context needed to review it. Do not use public issues for sensitive reports. For security vulnerabilities, follow the separate process in [SECURITY.md](../SECURITY.md).
 
 ## Enforcement
 

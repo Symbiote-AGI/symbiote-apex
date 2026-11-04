@@ -12,6 +12,13 @@ export interface OllamaEmbeddingOptions {
   fetcher?: typeof fetch;
 }
 
+export interface ArtifactEngineEmbeddingOptions {
+  baseUrl: string;
+  model: string;
+  timeoutMs?: number;
+  fetcher?: typeof fetch;
+}
+
 const MAX_BATCH_SIZE = 32;
 const MAX_TEXT_LENGTH = 32_000;
 const MAX_RESPONSE_BYTES = 16_000_000;
@@ -143,6 +150,91 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
+export class ArtifactEngineEmbeddingProvider implements EmbeddingProvider {
+  readonly id = 'artifact-engine';
+  readonly model: string;
+  private readonly baseUrl: URL;
+  private readonly timeoutMs: number;
+  private readonly fetcher: typeof fetch;
+
+  constructor(options: ArtifactEngineEmbeddingOptions) {
+    if (!options.model.trim() || options.model.length > 200) {
+      throw new Error('An Artifact Engine embedding model name is required.');
+    }
+    this.baseUrl = new URL(options.baseUrl);
+    if (!['http:', 'https:'].includes(this.baseUrl.protocol) || this.baseUrl.username || this.baseUrl.password
+      || this.baseUrl.search || this.baseUrl.hash) {
+      throw new Error('Artifact Engine embedding URL must be an HTTP(S) URL without credentials, query, or fragment.');
+    }
+    this.baseUrl.pathname = this.baseUrl.pathname.replace(/\/+$/, '') || '/v1';
+    this.model = options.model.trim();
+    this.timeoutMs = options.timeoutMs ?? 120_000;
+    if (!Number.isInteger(this.timeoutMs) || this.timeoutMs < 1_000 || this.timeoutMs > 300_000) {
+      throw new RangeError('Artifact Engine embedding timeout must be between 1000 and 300000 milliseconds.');
+    }
+    this.fetcher = options.fetcher ?? fetch;
+  }
+
+  async health(): Promise<void> {
+    const endpoint = new URL(`${this.baseUrl.pathname}/models`, this.baseUrl);
+    const response = await this.fetcher(endpoint, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(Math.min(this.timeoutMs, 15_000)),
+    });
+    const payload = await jsonResponse(response);
+    if (!response.ok) {
+      throw new Error(`Artifact Engine model discovery failed with HTTP ${response.status}.`);
+    }
+    if (!isRecord(payload) || !Array.isArray(payload.data)) {
+      throw new Error('Artifact Engine model discovery returned an invalid response.');
+    }
+    if (!payload.data.some(model => isRecord(model) && model.id === this.model)) {
+      throw new Error(`Artifact Engine model "${this.model}" is not loaded.`);
+    }
+  }
+
+  async embed(texts: readonly string[], signal?: AbortSignal): Promise<number[][]> {
+    if (texts.length === 0 || texts.length > MAX_BATCH_SIZE) {
+      throw new RangeError(`Embedding batches must contain between 1 and ${MAX_BATCH_SIZE} texts.`);
+    }
+    if (texts.some(text => typeof text !== 'string' || !text.trim() || text.length > MAX_TEXT_LENGTH)) {
+      throw new Error(`Embedding inputs must be non-empty strings of at most ${MAX_TEXT_LENGTH} characters.`);
+    }
+    const endpoint = new URL(`${this.baseUrl.pathname}/embeddings`, this.baseUrl);
+    const response = await this.fetcher(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ model: this.model, input: texts }),
+      redirect: 'error',
+      signal: signal ?? AbortSignal.timeout(this.timeoutMs),
+    });
+    const payload = await jsonResponse(response);
+    if (!response.ok) {
+      const detail = isRecord(payload) && isRecord(payload.error) && typeof payload.error.message === 'string'
+        ? `: ${payload.error.message.slice(0, 500)}`
+        : '';
+      throw new Error(`Artifact Engine embeddings request failed with HTTP ${response.status}${detail}.`);
+    }
+    if (!isRecord(payload) || !Array.isArray(payload.data) || payload.data.length !== texts.length) {
+      throw new Error('Artifact Engine embeddings response did not contain one vector per input.');
+    }
+    const vectors = payload.data.map((item, index) => {
+      if (!isRecord(item) || !Array.isArray(item.embedding) || item.embedding.length === 0
+        || item.embedding.length > 32768
+        || item.embedding.some(value => typeof value !== 'number' || !Number.isFinite(value))) {
+        throw new Error(`Artifact Engine returned an invalid embedding vector for input ${index}.`);
+      }
+      return item.embedding as number[];
+    });
+    if (new Set(vectors.map(vector => vector.length)).size !== 1) {
+      throw new Error('Artifact Engine returned embeddings with inconsistent dimensions.');
+    }
+    return vectors;
+  }
+}
+
 export function createEmbeddingProvider(config: {
   provider?: string;
   baseUrl?: string;
@@ -150,10 +242,18 @@ export function createEmbeddingProvider(config: {
   timeoutMs?: number;
   fetcher?: typeof fetch;
 }): EmbeddingProvider {
-  if (config.provider && config.provider !== 'ollama') {
+  if (config.provider && config.provider !== 'ollama' && config.provider !== 'artifact-engine') {
     throw new Error(`Unsupported embedding provider: ${config.provider}`);
   }
   if (!config.model?.trim()) throw new Error('Configure memory.neural.model before enabling neural memory.');
+  if (config.provider === 'artifact-engine') {
+    return new ArtifactEngineEmbeddingProvider({
+      baseUrl: config.baseUrl ?? 'http://127.0.0.1:8080/v1',
+      model: config.model,
+      ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
+      ...(config.fetcher ? { fetcher: config.fetcher } : {}),
+    });
+  }
   return new OllamaEmbeddingProvider({
     baseUrl: config.baseUrl ?? 'http://127.0.0.1:11434',
     model: config.model,

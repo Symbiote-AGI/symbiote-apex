@@ -30,6 +30,7 @@ export const PROVIDERS: ProviderChoice[] = [
   { id: 'nvidia', name: 'NVIDIA NIM', defaultModel: 'meta/llama-3.1-70b-instruct', envKey: PROVIDER_ENV.nvidia, needsKey: true },
   { id: 'github-copilot', name: 'GitHub Copilot', defaultModel: 'claude-sonnet-4', note: 'uses your gh login' },
   { id: 'ollama', name: 'Ollama', defaultModel: 'qwen3:4b', note: 'local' },
+  { id: 'artifact-engine', name: 'Artifact Engine', defaultModel: 'local', note: 'local GGUF runtime' },
   { id: 'gladius', name: 'GLADIUS', defaultModel: 'gladius-125m', note: 'local' },
 ];
 

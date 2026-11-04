@@ -341,6 +341,7 @@ const PROVIDERS = [
 
   { id: 'github-copilot', name: 'GitHub Copilot', models: ['claude-opus-4-6', 'claude-sonnet-4-20250514', 'gpt-4o', 'o3-mini'] },
   { id: 'gladius', name: 'Local (Gladius)', models: ['gladius-125m', 'gladius-1b'] },
+  { id: 'artifact-engine', name: 'Artifact Engine', models: ['local'] },
 ];
 
 const TOOLS = [

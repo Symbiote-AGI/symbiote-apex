@@ -16,6 +16,7 @@ import { geminiProvider } from '../providers/gemini.js';
 import { gladiusProvider } from '../providers/gladius.js';
 import { groqProvider } from '../providers/groq.js';
 import { ollamaProvider } from '../providers/ollama.js';
+import { artifactEngineProvider } from '../providers/artifact-engine.js';
 import { xaiProvider } from '../providers/xai.js';
 import { freeaiProvider } from '../providers/freeai.js';
 
@@ -135,12 +136,14 @@ function getProviderByName(name: string): Provider {
       return groqProvider;
     case 'ollama':
       return ollamaProvider;
+    case 'artifact-engine':
+      return artifactEngineProvider;
     case 'xai':
       return xaiProvider;
     case 'freeai':
       return freeaiProvider;
     default:
-      throw new Error(`Unknown provider: ${name}. Available: openrouter, anthropic, openai, github-copilot, vscode-proxy, gemini, gladius, groq, ollama, xai`);
+      throw new Error(`Unknown provider: ${name}. Available: openrouter, anthropic, openai, github-copilot, vscode-proxy, gemini, gladius, groq, ollama, artifact-engine, xai, freeai`);
   }
 }
 

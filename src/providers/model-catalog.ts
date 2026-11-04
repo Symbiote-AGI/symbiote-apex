@@ -13,6 +13,7 @@ export interface ModelDiscoveryOptions {
 const MODEL_CACHE_TTL_MS = 60_000;
 const DEFAULT_MODEL_BASE_URLS: Record<string, string> = {
   anthropic: 'https://api.anthropic.com/v1',
+  'artifact-engine': 'http://127.0.0.1:8080/v1',
   freeai: 'https://api.freetheai.xyz/v1',
   gemini: 'https://generativelanguage.googleapis.com/v1beta',
   groq: 'https://api.groq.com/openai/v1',

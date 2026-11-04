@@ -118,19 +118,30 @@ test('runner does not repeat a provider request after its fetch retry budget is 
   }
 });
 
-test('runner stops after repeated identical tool failures', async () => {
+test('runner feeds repeated identical tool failures back to the model for recovery', async () => {
   const originalCwd = process.cwd();
   const workspace = mkdtempSync(join(tmpdir(), 'symbiote-repeat-failure-'));
   let providerCalls = 0;
   let toolExecutions = 0;
-  const provider = fakeProvider([async function* () {
-    providerCalls++;
-    const id = `exec-${providerCalls}`;
-    yield { type: 'tool_use_start', id, name: 'exec' };
-    yield { type: 'tool_use_delta', id, input: '{"command":"read missing file"}' };
-    yield { type: 'tool_use_end', id };
-    yield { type: 'done', stopReason: 'tool_use' };
-  }]);
+  const seen: any[][] = [];
+  const provider = fakeProvider([
+    ...Array.from({ length: 3 }, (_, attempt) => async function* () {
+      providerCalls++;
+      const id = `exec-${attempt + 1}`;
+      yield { type: 'tool_use_start', id, name: 'exec' };
+      const input = attempt % 2 === 0
+        ? '{"command":"read missing file","timeout":1000}'
+        : '{"timeout":1000,"command":"read missing file"}';
+      yield { type: 'tool_use_delta', id, input };
+      yield { type: 'tool_use_end', id };
+      yield { type: 'done', stopReason: 'tool_use' };
+    }),
+    async function* () {
+      providerCalls++;
+      yield { type: 'text_delta', text: 'I found the missing-file error and will use the available file instead.' };
+      yield { type: 'done', stopReason: 'end_turn' };
+    },
+  ], seen);
 
   try {
     process.chdir(workspace);
@@ -143,11 +154,16 @@ test('runner stops after repeated identical tool failures', async () => {
       }),
     });
 
-    assert.equal(providerCalls, 3);
+    assert.equal(providerCalls, 5);
     assert.equal(toolExecutions, 3);
-    assert.equal(result.iterations, 3);
+    assert.equal(result.iterations, 5);
     assert.equal(result.maxIterationsHit, false);
-    assert.match(result.text, /same exec tool call failed 3 consecutive times/);
+    assert.equal(result.text, 'I found the missing-file error and will use the available file instead.');
+    const recoveredToolMessage = seen[3]
+      .filter(message => message.role === 'tool' && message.name === 'exec')
+      .at(-1);
+    assert.match(recoveredToolMessage.content, /failed 3 consecutive times/);
+    assert.match(recoveredToolMessage.content, /Do not repeat it unchanged/);
   } finally {
     process.chdir(originalCwd);
     rmSync(workspace, { recursive: true, force: true });

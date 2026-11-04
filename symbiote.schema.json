@@ -11,7 +11,7 @@
     "name": { "type": "string", "description": "Agent display name." },
     "emoji": { "type": "string", "description": "Agent icon identifier. Existing emoji values remain supported for compatibility." },
 
-    "defaultProvider": { "type": "string", "description": "Provider id used for new turns.", "examples": ["openrouter", "anthropic", "openai", "gemini", "groq", "xai", "nvidia", "github-copilot", "ollama", "gladius", "freeai"] },
+    "defaultProvider": { "type": "string", "description": "Provider id used for new turns.", "examples": ["openrouter", "anthropic", "openai", "gemini", "groq", "xai", "nvidia", "github-copilot", "ollama", "artifact-engine", "gladius", "freeai"] },
     "defaultModel": { "type": "string", "description": "Model id passed to the default provider." },
     "fallbackProviders": { "type": "array", "items": { "type": "string" }, "description": "Providers tried in order when the primary fails." },
     "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
@@ -46,12 +46,12 @@
       "properties": {
         "neural": {
           "type": "object",
-          "description": "Optional local-first dense memory, backed by an Ollama embedding model and the native HNSW index.",
+          "description": "Optional local-first dense memory, backed by an Ollama or Artifact Engine embedding endpoint and the native HNSW index.",
           "properties": {
             "enabled": { "type": "boolean", "default": false },
-            "provider": { "type": "string", "enum": ["ollama"], "default": "ollama" },
-            "baseUrl": { "type": "string", "format": "uri", "default": "http://127.0.0.1:11434" },
-            "model": { "type": "string", "description": "Configured Ollama embedding model, for example bge-m3 or qwen3-embedding:8b." },
+            "provider": { "type": "string", "enum": ["ollama", "artifact-engine"], "default": "artifact-engine" },
+            "baseUrl": { "type": "string", "format": "uri", "default": "http://127.0.0.1:8080/v1", "description": "Artifact Engine OpenAI-compatible API URL or the Ollama server origin." },
+            "model": { "type": "string", "description": "Embedding-capable model loaded in the configured provider." },
             "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 300000, "default": 120000 },
             "lexicalWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.4 },
             "denseWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.6 },

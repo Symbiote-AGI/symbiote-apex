@@ -155,10 +155,10 @@ export function validateConfig(config: SymbioteConfig): ValidationError[] {
         field: 'memory.neural.model',
         message: 'An embedding model is required when neural memory is enabled.',
         severity: 'error',
-        suggestion: 'Install an Ollama embedding model such as bge-m3 and set its configured model name.',
+        suggestion: 'Configure an embedding-capable Ollama or Artifact Engine model and set its exact configured model name.',
       });
     }
-    if (neuralMemory.provider && neuralMemory.provider !== 'ollama') {
+    if (neuralMemory.provider && neuralMemory.provider !== 'ollama' && neuralMemory.provider !== 'artifact-engine') {
       issues.push({
         field: 'memory.neural.provider',
         message: `Unsupported neural memory provider: ${neuralMemory.provider}`,

@@ -79,6 +79,16 @@ const MAX_STREAM_RETRIES = 3;
 const MAX_EMPTY_NUDGES = 2;
 const MAX_RESULT_SIZE = 50 * 1024;
 const REPEAT_CALL_THRESHOLD = 3;
+const stableToolInput = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(stableToolInput);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, stableToolInput(nested)]),
+    );
+  }
+  return value;
+};
 const envMs = (name: string, fallback: number): number => {
   const v = Number(process.env[name]);
   return Number.isFinite(v) && v > 0 ? v : fallback;
@@ -283,7 +293,6 @@ export async function runAgent(
   const todoScope = config.todoScope ?? `run-${randomUUID()}`;
   const completionReviewId = config.turnId ?? randomUUID();
   const todoManager = new TodoManager({ scope: todoScope, workspace: process.cwd() });
-  let repeatedToolFailure: { name: string; failures: number } | undefined;
 
   const ensureTodoPlan = () => {
     const userSummary = [...currentMessages].reverse().find(msg => msg.role === 'user');
@@ -719,14 +728,13 @@ export async function runAgent(
     for (const entry of toolResults) {
       const { tc, input, isError } = entry;
       let result = entry.result;
-      const key = `${tc.name}:${JSON.stringify(input)}`;
+      const key = `${tc.name}:${JSON.stringify(stableToolInput(input))}`;
       const failed = isError || looksFailed(result);
       const failures = failed ? (callCounts.get(key) ?? 0) + 1 : 0;
       if (failures > 0) callCounts.set(key, failures);
       else callCounts.delete(key);
       if (failures >= REPEAT_CALL_THRESHOLD) {
-        result += `\n\n[runner: this exact ${tc.name} call has failed ${failures} consecutive times. This turn is stopping; change the approach or correct the underlying error before retrying.]`;
-        repeatedToolFailure ??= { name: tc.name, failures };
+        result += `\n\n[runner recovery guidance: This identical ${tc.name} call has failed ${failures} consecutive times. Do not repeat it unchanged. Diagnose the reported error, inspect relevant state, or use a different safe approach. If the task cannot be completed, explain the blocker in your final response.]`;
       }
       allToolCalls.push({ name: tc.name, input, result });
 
@@ -765,21 +773,6 @@ export async function runAgent(
         iterations,
         maxIterationsHit: false,
         aborted: true,
-        temperatureHistory: temperatureHistory.length > 0 ? temperatureHistory : undefined,
-      };
-    }
-
-    if (repeatedToolFailure) {
-      const { name, failures } = repeatedToolFailure;
-      const text = `I stopped this turn after the same ${name} tool call failed ${failures} consecutive times. Progress is saved. Correct the underlying error or change the call before retrying.`;
-      console.warn(`[runner] Stopping turn after ${failures} consecutive failures of the same ${name} call`);
-      return {
-        text,
-        messages: messagesForPersistence(currentMessages),
-        toolCalls: allToolCalls,
-        iterations,
-        maxIterationsHit: false,
-        aborted: false,
         temperatureHistory: temperatureHistory.length > 0 ? temperatureHistory : undefined,
       };
     }

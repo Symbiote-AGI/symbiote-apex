@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { ContextStore } from '../agent/context-store.js';
 import { PersistentHnswIndex } from '../memory/dense-index.js';
-import { OllamaEmbeddingProvider } from '../memory/embeddings.js';
+import { ArtifactEngineEmbeddingProvider, OllamaEmbeddingProvider, createEmbeddingProvider } from '../memory/embeddings.js';
 import { NeuralMemoryEngine } from '../memory/neural-memory.js';
 import { VectorDB } from '../memory/vdb.js';
 import type { EmbeddingProvider } from '../memory/embeddings.js';
@@ -106,6 +106,51 @@ test('Ollama embedding provider discovers the configured model and validates vec
     fetcher: async () => response({ embeddings: [[1, Number.NaN]] }),
   });
   await assert.rejects(invalidVector.embed(['A test memory']), /invalid embedding vector/);
+});
+
+test('Artifact Engine embedding provider targets OpenAI-compatible routes and validates returned vectors', async () => {
+  const calls: Array<{ url: URL; method: string; body?: Record<string, unknown> }> = [];
+  const provider = new ArtifactEngineEmbeddingProvider({
+    baseUrl: 'http://127.0.0.1:8080/v1/',
+    model: 'qwen3-embedding',
+    fetcher: async (input, init) => {
+      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as Record<string, unknown> : undefined;
+      calls.push({ url, method: init?.method ?? 'GET', body });
+      if (url.pathname === '/v1/models') return response({ data: [{ id: 'qwen3-embedding' }] });
+      return response({ data: [
+        { index: 0, embedding: [0.1, 0.2, 0.3] },
+        { index: 1, embedding: [0.4, 0.5, 0.6] },
+      ] });
+    },
+  });
+
+  await provider.health();
+  assert.deepEqual(await provider.embed(['first', 'second']), [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]);
+  assert.equal(calls[0].url.pathname, '/v1/models');
+  assert.equal(calls[1].url.pathname, '/v1/embeddings');
+  assert.deepEqual(calls[1].body, { model: 'qwen3-embedding', input: ['first', 'second'] });
+  assert.equal(createEmbeddingProvider({
+    provider: 'artifact-engine',
+    model: 'qwen3-embedding',
+  }).id, 'artifact-engine');
+
+  const missingModel = new ArtifactEngineEmbeddingProvider({
+    baseUrl: 'http://127.0.0.1:8080/v1',
+    model: 'missing',
+    fetcher: async () => response({ data: [{ id: 'loaded-model' }] }),
+  });
+  await assert.rejects(missingModel.health(), /is not loaded/);
+
+  const invalidDimensions = new ArtifactEngineEmbeddingProvider({
+    baseUrl: 'http://127.0.0.1:8080/v1',
+    model: 'loaded-model',
+    fetcher: async () => response({ data: [
+      { embedding: [1, 2] },
+      { embedding: [1, 2, 3] },
+    ] }),
+  });
+  await assert.rejects(invalidDimensions.embed(['first', 'second']), /inconsistent dimensions/);
 });
 
 test('hybrid retrieval finds semantically related memories and enforces metadata filters', async () => {

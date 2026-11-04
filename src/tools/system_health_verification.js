@@ -189,11 +189,22 @@ async function getRuntimeStatus() {
     status.ollama_error = error.message;
   }
 
+  try {
+    const response = await web_fetch('http://127.0.0.1:8080/v1/models', { maxChars: 2000 });
+    const data = JSON.parse(response);
+    status.artifact_engine = 'accessible';
+    status.artifact_engine_models = data.data?.length || 0;
+    status.artifact_engine_response = 'OK';
+  } catch (error) {
+    status.artifact_engine = 'inaccessible';
+    status.artifact_engine_error = error.message;
+  }
+
   return status;
 }
 
 async function getPortsListening() {
-  const result = await exec('netstat -an | findstr LISTENING | findstr ":3007 :3009 :5678 :11434"', { shell: 'cmd', timeout: 60 });
+  const result = await exec('netstat -an | findstr LISTENING | findstr ":3007 :3009 :5678 :8080 :11434"', { shell: 'cmd', timeout: 60 });
   return result;
 }
 

@@ -94,6 +94,7 @@ export interface SymbioteConfig {
     xai?: ProviderConfigBlock;
     nvidia?: ProviderConfigBlock;
     ollama?: ProviderConfigBlock;
+    'artifact-engine'?: ProviderConfigBlock;
     gladius?: ProviderConfigBlock;
     'github-copilot'?: ProviderConfigBlock;
     freeai?: ProviderConfigBlock;

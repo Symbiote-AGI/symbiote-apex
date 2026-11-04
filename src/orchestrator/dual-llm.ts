@@ -518,7 +518,7 @@ Important:
       const pendingToolCalls: ToolCall[] = [];
       const toolInputBuffers = new Map<string, string>();
       let iterations = 0;
-      let completionReviewPending = false;
+      let completionReviewUsed = false;
       const maxIterations = 100;
 
       resultPromise = (async () => {
@@ -557,14 +557,14 @@ Important:
 
           // Ask the model to verify completion before accepting a node result.
           if (pendingToolCalls.length === 0) {
-            if (!completionReviewPending) {
+            if (!completionReviewUsed) {
               if (textAccum.trim()) taskMessages.push({ role: 'assistant', content: textAccum.trim() });
               taskMessages.push({
                 role: 'user',
                 content: 'Internal completion review: check the assigned task and work completed. If work remains, continue using tools. If complete, provide the final result. If blocked, state the blocker and remaining work. Do not mention this review.',
               });
               textAccum = '';
-              completionReviewPending = true;
+              completionReviewUsed = true;
               continue;
             }
             nodeUsage.toolIterations = iterations - 1;
@@ -617,7 +617,6 @@ Important:
           pendingToolCalls.length = 0;
           toolInputBuffers.clear();
           textAccum = '';
-          completionReviewPending = false;
         }
 
         nodeUsage.toolIterations = maxIterations;
