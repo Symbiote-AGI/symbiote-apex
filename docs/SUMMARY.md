@@ -42,6 +42,7 @@
 * [Gladius](providers/gladius.md)
 * [OpenRouter](providers/openrouter.md)
 * [NVIDIA](providers/nvidia.md)
+* [Cloudflare Workers AI](providers/cloudflare.md)
 * [Qwen](providers/qwen.md)
 * [AIHorde](providers/aihorde.md)
 * [FreeAI](providers/freeai.md)

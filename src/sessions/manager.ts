@@ -184,6 +184,7 @@ function safeArchiveBoundary(messages: Message[], requestedBoundary: number): nu
 export class SessionManager {
   private dir: string;
   private ttl: number;
+  private sessionSummaryCache: Map<string, SessionSummary> | null = null;
 
   constructor(baseDir?: string, ttl?: number, legacyDirs: string[] = []) {
     this.dir = path.resolve(baseDir ?? path.join(os.homedir(), DEFAULT_DIR));
@@ -367,6 +368,32 @@ export class SessionManager {
     if (title) session.metadata.label = title;
     const destination = this.filePath(session.id);
     atomicWriteFile(destination, JSON.stringify(session, null, 2), `session ${session.id}`);
+    this.updateCachedSummary(session, title);
+  }
+
+  private summarizeSession(session: Session, title?: string): SessionSummary | undefined {
+    const metadata = session.metadata;
+    if (metadata?.hiddenFromList || session.id.startsWith('heartbeat-')) return undefined;
+    return {
+      id: session.id,
+      label: title ?? deriveConversationTitle(session.messages) ?? metadata?.label,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      messageCount: session.messages.length,
+      provider: metadata?.provider,
+      model: metadata?.model,
+      parentSessionId: metadata?.parentSessionId,
+      sessionKind: metadata?.sessionKind ?? (metadata?.parentSessionId ? 'subagent' : undefined),
+      projectId: metadata?.projectId,
+      agentId: metadata?.agentId,
+    };
+  }
+
+  private updateCachedSummary(session: Session, title?: string): void {
+    if (!this.sessionSummaryCache) return;
+    const summary = this.summarizeSession(session, title);
+    if (summary) this.sessionSummaryCache.set(session.id, summary);
+    else this.sessionSummaryCache.delete(session.id);
   }
 
   delete(id: string): boolean {
@@ -419,6 +446,7 @@ export class SessionManager {
       removed = true;
     }
 
+    this.sessionSummaryCache?.delete(id);
     return removed;
   }
 
@@ -431,6 +459,7 @@ export class SessionManager {
     }
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.renameSync(source, destination);
+    this.sessionSummaryCache?.delete(id);
     return true;
   }
 
@@ -473,12 +502,19 @@ export class SessionManager {
       fs.mkdirSync(path.dirname(session.destination), { recursive: true });
       fs.renameSync(session.source, session.destination);
     }
+    if (sessions.length > 0) this.sessionSummaryCache = null;
     return sessions.length;
   }
 
   list(): SessionSummary[] {
+    if (this.sessionSummaryCache) {
+      return [...this.sessionSummaryCache.values()]
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+        .map(summary => ({ ...summary }));
+    }
+
     try {
-      const summaries: SessionSummary[] = [];
+      const summaries = new Map<string, SessionSummary>();
       for (const directory of this.sessionDirectories()) {
         let files: string[];
         try {
@@ -491,25 +527,15 @@ export class SessionManager {
           try {
             const parsed = JSON.parse(fs.readFileSync(path.join(directory, file), 'utf-8')) as Session;
             const s = this.load(parsed.id) ?? parsed;
-            if (s.metadata.hiddenFromList || s.id.startsWith('heartbeat-')) continue;
-            const title = deriveConversationTitle(s.messages);
-            summaries.push({
-              id: s.id,
-              label: title ?? s.metadata?.label,
-              createdAt: s.createdAt,
-              updatedAt: s.updatedAt,
-              messageCount: s.messages.length,
-              provider: s.metadata?.provider,
-              model: s.metadata?.model,
-              parentSessionId: s.metadata?.parentSessionId,
-              sessionKind: s.metadata?.sessionKind ?? (s.metadata?.parentSessionId ? 'subagent' : undefined),
-              projectId: s.metadata?.projectId,
-              agentId: s.metadata?.agentId,
-            });
+            const summary = this.summarizeSession(s);
+            if (summary) summaries.set(s.id, summary);
           } catch { /* skip */ }
         }
       }
-      return summaries.sort((a, b) => b.updatedAt - a.updatedAt);
+      this.sessionSummaryCache = summaries;
+      return [...summaries.values()]
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+        .map(summary => ({ ...summary }));
     } catch {
       return [];
     }

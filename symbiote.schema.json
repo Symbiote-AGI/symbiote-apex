@@ -11,9 +11,10 @@
     "name": { "type": "string", "description": "Agent display name." },
     "emoji": { "type": "string", "description": "Agent icon identifier. Existing emoji values remain supported for compatibility." },
 
-    "defaultProvider": { "type": "string", "description": "Provider id used for new turns.", "examples": ["openrouter", "anthropic", "openai", "gemini", "groq", "xai", "nvidia", "github-copilot", "ollama", "artifact-engine", "gladius", "freeai"] },
+    "defaultProvider": { "type": "string", "description": "Provider id used for new turns.", "examples": ["openrouter", "anthropic", "openai", "gemini", "groq", "xai", "nvidia", "cloudflare", "github-copilot", "ollama", "artifact-engine", "gladius", "freeai"] },
     "defaultModel": { "type": "string", "description": "Model id passed to the default provider." },
     "fallbackProviders": { "type": "array", "items": { "type": "string" }, "description": "Providers tried in order when the primary fails." },
+    "sarsiProviders": { "type": "array", "items": { "type": "string" }, "description": "Providers allowed for SARSI task-specific routing, separate from the fallback chain." },
     "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
     "maxTokens": { "type": "integer", "minimum": 1, "description": "Max output tokens per LLM call." },
     "maxIterations": { "type": "integer", "minimum": 1, "description": "Tool-loop iterations per pass before BLINK continues the turn." },
@@ -92,8 +93,11 @@
         "type": "object",
         "properties": {
           "apiKey": { "type": "string", "description": "Use ${PROVIDER_API_KEY} and store the value in .env." },
+          "accountId": { "type": "string", "description": "Cloudflare account ID; use ${CLOUDFLARE_ACCOUNT_ID} and store the value in .env." },
           "baseUrl": { "type": "string", "format": "uri" },
           "model": { "type": "string" },
+          "models": { "type": "array", "items": { "type": "string" }, "description": "Explicit model allowlist for SARSI routing, in addition to the provider's primary model." },
+          "maxTokens": { "type": "integer", "minimum": 1, "description": "Maximum output tokens requested from this provider." },
           "timeoutMs": { "type": "integer", "minimum": 1000 },
           "contextWindow": { "type": "integer", "minimum": 1 }
         }

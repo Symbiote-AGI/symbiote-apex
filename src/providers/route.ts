@@ -5,6 +5,7 @@ const PROVIDER_API_KEYS: Record<string, string> = {
   openai: 'OPENAI_API_KEY',
   groq: 'GROQ_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
+  cloudflare: 'CLOUDFLARE_API_TOKEN',
 };
 
 export interface ProviderRouteChoice {
@@ -17,7 +18,7 @@ export interface ProviderRouteChoice {
 export function selectProviderRoute(
   decision: { provider: string; model: string },
   registry: ReadonlyMap<string, Provider>,
-  providerConfigs: Record<string, { apiKey?: string; model?: string } | undefined>,
+  providerConfigs: Record<string, { apiKey?: string; model?: string; models?: readonly string[] } | undefined>,
   fallback: Omit<ProviderRouteChoice, 'routed'>,
   explicitlyAllowedProviders: readonly string[] = [],
 ): ProviderRouteChoice {
@@ -29,7 +30,9 @@ export function selectProviderRoute(
   const configuredModel = isFallbackProvider
     ? fallback.model
     : providerConfigs[decision.provider]?.model;
-  if ((!isFallbackProvider && !isExplicitlyAllowed) || !configuredModel || decision.model !== configuredModel) {
+  const allowedModels = providerConfigs[decision.provider]?.models ?? [];
+  const isConfiguredModel = decision.model === configuredModel || allowedModels.includes(decision.model);
+  if ((!isFallbackProvider && !isExplicitlyAllowed) || !isConfiguredModel) {
     return { ...fallback, routed: false };
   }
 

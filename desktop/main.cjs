@@ -25,8 +25,9 @@ const gatewayProcessPath = process.env.SYMBIOTE_GATEWAY_PROCESS_PATH
   ? path.resolve(process.env.SYMBIOTE_GATEWAY_PROCESS_PATH)
   : path.join(app.getPath('userData'), 'gateway-process.json');
 const gatewaySupervisorLogPath = path.join(app.getPath('userData'), 'logs', 'gateway-supervisor.log');
-const gatewayRequestTimeoutMs = 10_000;
-const gatewayStartupTimeoutMs = 30_000;
+const gatewayRequestTimeoutMs = 45_000;
+const gatewayHealthRequestTimeoutMs = 5_000;
+const gatewayStartupTimeoutMs = 90_000;
 const gatewayHealthFailureThreshold = 5;
 let gatewayStartup;
 let activeGatewayConfig;
@@ -282,16 +283,16 @@ function gatewayHealthCheck(gateway, onFailure) {
       if (!healthy) onFailure?.(`${reason}; elapsedMs=${Date.now() - startedAt}`);
       resolve(healthy);
     };
-    const request = http.get(`${gateway.url}/api/status`, {
+    const request = http.get(`${gateway.url}/api/healthz`, {
       ...gatewayRequestOptions(gateway),
-      timeout: gatewayRequestTimeoutMs,
+      timeout: gatewayHealthRequestTimeoutMs,
     }, response => {
       response.resume();
       finish(response.statusCode === 200, `HTTP ${response.statusCode ?? 'unknown'}`);
     });
     request.once('timeout', () => {
       request.destroy();
-      finish(false, `request timed out after ${gatewayRequestTimeoutMs}ms`);
+      finish(false, `request timed out after ${gatewayHealthRequestTimeoutMs}ms`);
     });
     request.once('error', error => finish(false, `${error.code ?? 'request-error'}: ${error.message}`));
   });
@@ -638,7 +639,7 @@ async function ensureGateway() {
         throw new Error(`The installed SymbioteGateway service is in state ${installedServiceState}; refusing to launch a second Gateway.`);
       }
       if (!await waitForGateway(gateway, gatewayStartupTimeoutMs)) {
-        throw new Error(`The installed SymbioteGateway service did not become healthy at ${gateway.url}/api/status. Review its Windows service logs.`);
+        throw new Error(`The installed SymbioteGateway service did not become healthy at ${gateway.url}/api/healthz. Review its Windows service logs.`);
       }
       return gateway;
     }
@@ -656,8 +657,7 @@ async function ensureGateway() {
       && typeof launcherRecord.configPath === 'string'
       && path.resolve(launcherRecord.daemonPath) === path.resolve(gateway.daemonPath)
       && path.resolve(launcherRecord.configPath) === path.resolve(gateway.configPath)
-      && managedGatewayProcess(launcherRecord.pid, gateway)
-      && await gatewayPortInUse(gateway)) {
+      && managedGatewayProcess(launcherRecord.pid, gateway)) {
       launcherManagedGateway = true;
       return gateway;
     }
@@ -705,7 +705,7 @@ async function ensureGateway() {
     if (!await waitForGateway(gateway)) {
       logGatewaySupervisor(`Gateway child pid=${child.pid ?? 'unknown'} did not become healthy within ${gatewayStartupTimeoutMs}ms; terminating the unready startup.`);
       if (child.pid && child.exitCode === null) child.kill();
-      throw new Error(`The Gateway process did not become healthy at ${gateway.url}/api/status. See ${path.join(app.getPath('userData'), 'logs', 'gateway.log')}.`);
+      throw new Error(`The Gateway process did not become healthy at ${gateway.url}/api/healthz. See ${path.join(app.getPath('userData'), 'logs', 'gateway.log')}.`);
     }
     const startedStatus = await readGatewayJson(gateway, '/api/status');
     if (startedStatus?.pid !== child.pid) {
@@ -812,7 +812,7 @@ function startGatewayMonitor() {
         return;
       }
       gatewayHealthFailures++;
-      logGatewaySupervisor(`Gateway health check failed (${gatewayHealthFailures}/${gatewayHealthFailureThreshold}) at ${gateway.url}/api/status: ${failureDetails}.`);
+      logGatewaySupervisor(`Gateway health check failed (${gatewayHealthFailures}/${gatewayHealthFailureThreshold}) at ${gateway.url}/api/healthz: ${failureDetails}.`);
       if (gatewayHealthFailures < gatewayHealthFailureThreshold) return;
       gatewayHealthFailures = 0;
       logGatewaySupervisor(`Gateway remained unhealthy for ${gatewayHealthFailureThreshold} consecutive checks; attempting recovery.`);
@@ -821,7 +821,7 @@ function startGatewayMonitor() {
         if (currentState === 'STOPPED') {
           void ensureGateway().catch(error => console.error('Could not recover the Gateway service:', error));
         } else if (currentState === 'RUNNING') {
-          console.error(`The SymbioteGateway service is running but its status endpoint is unavailable at ${gateway.url}/api/status.`);
+          console.error(`The SymbioteGateway service is running but its health endpoint is unavailable at ${gateway.url}/api/healthz.`);
         }
         return;
       }

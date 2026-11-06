@@ -13,6 +13,7 @@ export const PROVIDER_ENV: Record<string, string> = {
   groq: 'GROQ_API_KEY',
   xai: 'XAI_API_KEY',
   nvidia: 'NVIDIA_API_KEY',
+  cloudflare: 'CLOUDFLARE_API_TOKEN',
 };
 
 export interface TemplateInput {
@@ -65,6 +66,7 @@ export function buildConfigTemplate(input: TemplateInput = {}): Record<string, a
     defaultProvider: input.provider ?? 'openrouter',
     defaultModel: input.model ?? 'openrouter/free',
     fallbackProviders: [],
+    sarsiProviders: input.provider === 'cloudflare' ? ['cloudflare'] : [],
     temperature: input.temperature ?? 0.7,
     maxTokens: input.maxTokens ?? 8192,
     maxIterations: input.maxIterations ?? 100,
@@ -113,6 +115,18 @@ export function buildConfigTemplate(input: TemplateInput = {}): Record<string, a
       groq: { baseUrl: 'https://api.groq.com/openai', apiKey: envRef(PROVIDER_ENV.groq) },
       xai: { apiKey: envRef(PROVIDER_ENV.xai) },
       nvidia: { apiKey: envRef(PROVIDER_ENV.nvidia) },
+      cloudflare: {
+        accountId: envRef('CLOUDFLARE_ACCOUNT_ID'),
+        apiKey: envRef(PROVIDER_ENV.cloudflare),
+        model: '@cf/zai-org/glm-4.7-flash',
+        models: [
+          '@cf/zai-org/glm-4.7-flash',
+          '@cf/zai-org/glm-5.3-flash',
+          '@cf/openai/gpt-oss-20b',
+          '@cf/qwen/qwen3-30b-a3b-fp8',
+          '@cf/deepseek-ai/deepseek-v4-flash-0731',
+        ],
+      },
       'github-copilot': {},
       ollama: { baseUrl: 'http://127.0.0.1:11434' },
       'artifact-engine': { baseUrl: 'http://127.0.0.1:8080' },

@@ -28,6 +28,7 @@ export const PROVIDERS: ProviderChoice[] = [
   { id: 'groq', name: 'Groq', defaultModel: 'llama-3.3-70b-versatile', envKey: PROVIDER_ENV.groq, needsKey: true, note: 'fast inference' },
   { id: 'xai', name: 'xAI', defaultModel: 'grok-3-fast', envKey: PROVIDER_ENV.xai, needsKey: true },
   { id: 'nvidia', name: 'NVIDIA NIM', defaultModel: 'meta/llama-3.1-70b-instruct', envKey: PROVIDER_ENV.nvidia, needsKey: true },
+  { id: 'cloudflare', name: 'Cloudflare Workers AI', defaultModel: '@cf/zai-org/glm-4.7-flash', envKey: PROVIDER_ENV.cloudflare, needsKey: true, note: 'Workers AI' },
   { id: 'github-copilot', name: 'GitHub Copilot', defaultModel: 'claude-sonnet-4', note: 'uses your gh login' },
   { id: 'ollama', name: 'Ollama', defaultModel: 'qwen3:4b', note: 'local' },
   { id: 'artifact-engine', name: 'Artifact Engine', defaultModel: 'local', note: 'local GGUF runtime' },
@@ -46,6 +47,7 @@ export interface SetupInput {
   provider: string;
   model: string;
   providerApiKey?: string;
+  providerAccountId?: string;
   workspace: string;
   sessionsDir: string;
   temperature: number;
@@ -76,7 +78,7 @@ export interface SetupWriteResult {
 
 /** Wizard-controlled fields. Everything else in an existing config is preserved on re-run. */
 const WIZARD_KEYS = ['name', 'emoji', 'defaultProvider', 'defaultModel', 'temperature', 'maxTokens', 'maxIterations',
-  'workspace', 'ownerIds', 'apiHost', 'apiPort', 'webHost', 'webPort', 'xmcpPort', 'allowedOrigins'] as const;
+  'workspace', 'ownerIds', 'apiHost', 'apiPort', 'webHost', 'webPort', 'xmcpPort', 'allowedOrigins', 'sarsiProviders'] as const;
 
 export function defaultSetupInput(existing?: SymbioteConfig, envPath = path.resolve('.env')): SetupInput {
   const env = readEnv(envPath);
@@ -104,6 +106,12 @@ export function defaultSetupInput(existing?: SymbioteConfig, envPath = path.reso
     whatsappPhoneNumber: existing?.whatsapp?.phoneNumber,
     whatsappAuthDir: existing?.whatsapp?.authDir ?? template.whatsapp.authDir,
     providerApiKey: choice.envKey ? (process.env[choice.envKey] ?? env[choice.envKey]) : undefined,
+    providerAccountId: (() => {
+      const accountId = existing?.providers.cloudflare?.accountId;
+      return (accountId && !accountId.startsWith('${') ? accountId : undefined)
+        ?? process.env.CLOUDFLARE_ACCOUNT_ID
+        ?? env.CLOUDFLARE_ACCOUNT_ID;
+    })(),
     agent: {
       enabled: !fs.existsSync(path.join(workspace, 'SOUL.md')),
       name: existing?.name ?? 'Symbiote',
@@ -136,8 +144,10 @@ export function buildConfig(input: SetupInput, configDir = process.cwd()): Recor
     discord: { enabled: input.discordEnabled, botId: input.discordBotId },
     whatsapp: { enabled: input.whatsappEnabled, phoneNumber: input.whatsappPhoneNumber || undefined, authDir: toPortablePath(input.whatsappAuthDir) },
   });
+  if (input.provider === 'cloudflare') config.sarsiProviders = ['cloudflare'];
   config.workspace = rel === '' ? '.' : rel.startsWith('..') && path.isAbsolute(input.workspace) ? input.workspace : rel;
   config.sessionsDir = '.session';
+  if (input.provider === 'cloudflare') config.providers.cloudflare.model = input.model;
   return config;
 }
 
@@ -151,7 +161,7 @@ function toPortablePath(p: string): string {
 }
 
 const ENV_SECTIONS: Array<{ title: string; keys: string[] }> = [
-  { title: 'LLM provider keys', keys: Object.values(PROVIDER_ENV) },
+  { title: 'LLM provider keys', keys: [...Object.values(PROVIDER_ENV), 'CLOUDFLARE_ACCOUNT_ID'] },
   { title: 'Discord', keys: ['DISCORD_BOT_TOKEN', 'DISCORD_CLIENT_ID'] },
   { title: 'HTTP API', keys: ['SYMBIOTE_API_KEY', 'SYMBIOTE_API_PORT', 'SYMBIOTE_API_HOST', 'SYMBIOTE_PORT', 'SYMBIOTE_WEB_HOST'] },
 ];
@@ -161,6 +171,9 @@ export function buildEnvFile(input: SetupInput, existingEnv: Record<string, stri
   const values: Record<string, string> = { ...existingEnv };
 
   if (selected?.envKey && input.providerApiKey) values[selected.envKey] = input.providerApiKey;
+  if (input.provider === 'cloudflare' && input.providerAccountId) {
+    values.CLOUDFLARE_ACCOUNT_ID = input.providerAccountId;
+  }
   if (input.discordEnabled) {
     if (input.discordToken) values.DISCORD_BOT_TOKEN = input.discordToken;
     if (input.discordBotId) values.DISCORD_CLIENT_ID = input.discordBotId;
@@ -188,6 +201,9 @@ function timestamp(): string {
 export function writeSetupFiles(input: SetupInput, configPath = path.resolve('symbiote.json'), envPath = path.resolve('.env')): SetupWriteResult {
   const configDir = path.dirname(path.resolve(configPath));
   const existingEnv = readEnv(envPath);
+  if (input.provider === 'cloudflare' && !/^[a-f0-9]{32}$/i.test(input.providerAccountId ?? '')) {
+    throw new Error('Cloudflare setup requires a valid 32-character hexadecimal account ID.');
+  }
   fs.mkdirSync(configDir, { recursive: true });
   fs.mkdirSync(path.dirname(envPath), { recursive: true });
   fs.mkdirSync(input.workspace, { recursive: true });
@@ -203,6 +219,17 @@ export function writeSetupFiles(input: SetupInput, configPath = path.resolve('sy
       for (const key of WIZARD_KEYS) overlay[key] = config[key];
       overlay.discord = { ...upgraded.discord, enabled: config.discord.enabled, botId: config.discord.botId, policy: { ...upgraded.discord?.policy, ownerIds: config.ownerIds } };
       overlay.whatsapp = { ...upgraded.whatsapp, ...config.whatsapp };
+      if (input.provider === 'cloudflare') {
+        overlay.providers = {
+          ...upgraded.providers,
+          cloudflare: {
+            ...upgraded.providers.cloudflare,
+            accountId: '${CLOUDFLARE_ACCOUNT_ID}',
+            apiKey: '${CLOUDFLARE_API_TOKEN}',
+            model: input.model,
+          },
+        };
+      }
       config = { ...upgraded, ...overlay };
     } catch {
       // Unreadable existing file: the backup below preserves it and the fresh config replaces it.
@@ -261,7 +288,12 @@ export async function runInteractiveSetup(configPath = path.resolve('symbiote.js
     const provider = await ask.choose('Provider', options, defaults.provider);
     const choice = PROVIDERS.find(p => p.id === provider) ?? PROVIDERS[0];
     const model = await ask.text('Model', provider === defaults.provider ? defaults.model : choice.defaultModel);
-    const providerApiKey = choice.needsKey ? await ask.secret(`${choice.name} API key`, defaults.providerApiKey) : undefined;
+    const providerApiKey = choice.needsKey
+      ? await ask.secret(`${choice.name} API key`, provider === defaults.provider ? defaults.providerApiKey : undefined)
+      : undefined;
+    const providerAccountId = provider === 'cloudflare'
+      ? await ask.text('Cloudflare account ID', defaults.providerAccountId ?? '')
+      : undefined;
 
     // ── Workspace
     ask.section('Workspace');
@@ -296,6 +328,7 @@ export async function runInteractiveSetup(configPath = path.resolve('symbiote.js
       provider,
       model,
       providerApiKey,
+      providerAccountId,
       workspace,
       sessionsDir: defaults.sessionsDir,
       temperature: defaults.temperature,

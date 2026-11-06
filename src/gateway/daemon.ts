@@ -11,7 +11,12 @@ import 'dotenv/config';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { ActionRowBuilder, StringSelectMenuBuilder, type AutocompleteInteraction, type ChatInputCommandInteraction, type StringSelectMenuInteraction } from 'discord.js';
+import type {
+  AutocompleteInteraction,
+  ChatInputCommandInteraction,
+  StringSelectMenuBuilder as DiscordStringSelectMenuBuilder,
+  StringSelectMenuInteraction,
+} from 'discord.js';
 import { execFile } from 'node:child_process';
 import { parse } from 'dotenv';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -30,11 +35,11 @@ import {
 import { ChannelRegistry } from '../channels/registry.js';
 import { ToolProgressBubble } from '../channels/progress-bubble.js';
 import { configSearchPaths, expandHome } from '../runtime/platform.js';
+import { isUnhandledWsHandshakeTimeout } from '../runtime/websocket-errors.js';
 import { AppearanceSettingsStore } from '../appearance/settings.js';
-import {
-  DiscordAdapter,
-  type DiscordSlashCommandDefinition,
-  type DiscordSlashInteraction,
+import type {
+  DiscordSlashCommandDefinition,
+  DiscordSlashInteraction,
 } from '../channels/adapters/discord.js';
 import {
   buildDiscordSlashCommands,
@@ -42,7 +47,6 @@ import {
   discoverDiscordSkillCommands,
   type DiscordSkillCommand,
 } from '../channels/discord-slash-commands.js';
-import { WhatsAppAdapter } from '../channels/adapters/whatsapp.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { CronManager, type CronAlert } from '../cron/manager.js';
 import { createCronManageTool } from '../tools/builtin/cron.js';
@@ -140,6 +144,7 @@ import { ollamaProvider } from '../providers/ollama.js';
 import { artifactEngineProvider } from '../providers/artifact-engine.js';
 import { xaiProvider } from '../providers/xai.js';
 import { freeaiProvider } from '../providers/freeai.js';
+import { cloudflareProvider } from '../providers/cloudflare.js';
 import { discoverProviderModels } from '../providers/model-catalog.js';
 import type { BusEnvelope, ChannelPolicy, OutboundMessage, SessionRoute } from '../channels/types.js';
 import { formatForChannel } from '../channels/formatter.js';
@@ -261,6 +266,7 @@ const PROVIDERS = new Map<string, Provider>([
   ['gladius', gladiusProvider],
   ['groq', groqProvider],
   ['openrouter', openrouterProvider],
+  ['cloudflare', cloudflareProvider],
   ['nvidia', nvidiaProvider],
   ['ollama', ollamaProvider],
   ['artifact-engine', artifactEngineProvider],
@@ -320,9 +326,12 @@ export class SymbioteGateway {
   private vdbInstance: import('../memory/vdb.js').VectorDB | null = null;
   private vdbPulseRunning = false;
   private projectMemoryLastSyncAt = 0;
+  private readonly missingProjectMemoryWorkspaces = new Set<string>();
   /** Context Store — bridges attention (context window) and memory (vdb) */
   private contextStore: ContextStore | null = null;
   private neuralMemory: NeuralMemoryEngine | null = null;
+  private neuralMemoryReady = false;
+  private neuralBackfillPromise: Promise<number> | null = null;
 
   /** v2.0 — Metrics collector: tokens, latency, tools, errors */
   private metrics: MetricsCollector;
@@ -664,7 +673,8 @@ export class SymbioteGateway {
     console.log(`  ${palette.bold}${palette.green}[READY]${palette.reset} ${palette.bold}${readyMsg}${palette.reset} ${palette.dim}— ${elapsed}ms${palette.reset}`);
     console.log();
 
-    this.startGammaBootstrap();
+    // Let the launcher and desktop finish their health check and initial workspace load before optional adapter imports run.
+    setTimeout(() => this.startGammaBootstrap(), 30_000);
   }
 
   private startGammaBootstrap(): void {
@@ -818,18 +828,16 @@ export class SymbioteGateway {
       registerSharedNeuralMemory(this.config.workspace, this.neuralMemory ?? undefined);
       if (this.neuralMemory) {
         const status = await this.neuralMemory.initialize();
+        this.neuralMemoryReady = true;
         const detail = status.state === 'degraded' ? ` — ${status.lastError ?? 'embedding provider unavailable'}` : '';
         console.log(`[memory] Neural memory ${status.state}: ${status.indexedDocuments}/${status.corpusDocuments} vectors using ${status.model}${detail}`);
-        void this.neuralMemory.indexMissing(64).then(indexed => {
-          if (indexed > 0) console.log(`[memory] Neural backfill indexed ${indexed} documents.`);
-        }).catch(error => {
-          console.error(`[memory] Initial dense backfill failed: ${error instanceof Error ? error.message : String(error)}`);
-        });
+        this.startNeuralMemoryBackfill('initial');
       } else {
         registerSharedNeuralMemory(this.config.workspace, undefined);
       }
     } catch (error) {
       this.neuralMemory = null;
+      this.neuralMemoryReady = false;
       registerSharedNeuralMemory(this.config.workspace, undefined);
       console.error(`[memory] Neural memory could not initialize; lexical VDB remains available: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -877,6 +885,29 @@ export class SymbioteGateway {
     } finally {
       this.mt5JournalRunning = false;
     }
+  }
+
+  private startNeuralMemoryBackfill(source: 'initial' | 'pulse'): void {
+    const neuralMemory = this.neuralMemory;
+    if (!neuralMemory || !this.neuralMemoryReady || this.neuralBackfillPromise || this.shutdownRequested) return;
+
+    const backfill = neuralMemory.indexMissing(64);
+    this.neuralBackfillPromise = backfill;
+    void backfill.then(indexed => {
+      if (indexed > 0) {
+        const message = source === 'initial'
+          ? `[memory] Neural backfill indexed ${indexed} documents.`
+          : `${palette.dim}  [memory]${palette.reset} Dense backfill: +${indexed} vectors`;
+        console.log(message);
+      }
+    }).catch(error => {
+      const message = source === 'initial'
+        ? `[memory] Initial dense backfill failed: ${error instanceof Error ? error.message : String(error)}`
+        : `${palette.dim}  [memory]${palette.reset} Dense backfill failed: ${error instanceof Error ? error.message : String(error)}`;
+      console.error(message);
+    }).finally(() => {
+      if (this.neuralBackfillPromise === backfill) this.neuralBackfillPromise = null;
+    });
   }
 
   /** Flush new messages from all active sessions to VDB */
@@ -948,13 +979,7 @@ export class SymbioteGateway {
         this.syncProjectMemory();
         this.syncSymbioteRuntimeMemory();
       }
-      if (this.neuralMemory) {
-        void this.neuralMemory.indexMissing(64).then(indexed => {
-          if (indexed > 0) console.log(`${palette.dim}  [memory]${palette.reset} Dense backfill: +${indexed} vectors`);
-        }).catch(error => {
-          console.error(`${palette.dim}  [memory]${palette.reset} Dense backfill failed: ${error instanceof Error ? error.message : String(error)}`);
-        });
-      }
+      this.startNeuralMemoryBackfill('pulse');
       this.vdbInstance.checkIdle();
     } finally {
       this.vdbPulseRunning = false;
@@ -982,6 +1007,17 @@ export class SymbioteGateway {
           namespace,
           metadata: { projectId: project.id, projectName: project.name, documentType: 'overview' },
         });
+
+        if (!fs.existsSync(project.workspace)) {
+          if (!this.missingProjectMemoryWorkspaces.has(project.id)) {
+            console.warn(`[vdb] Project workspace is missing for "${project.name}" (${project.id}); indexing metadata only.`);
+          }
+          this.missingProjectMemoryWorkspaces.add(project.id);
+          database.syncNamespace(namespace, documents);
+          synchronized++;
+          continue;
+        }
+        this.missingProjectMemoryWorkspaces.delete(project.id);
 
         for (const task of this.workspaceRegistry.listProjectTasks(project.id)) {
           const text = [task.title, task.description].filter(Boolean).join('\n\n').trim();
@@ -1217,6 +1253,7 @@ export class SymbioteGateway {
       const adapterId = dcfg.adapterId ?? 'discord-main';
       try {
         console.log(info(`Starting Discord adapter ${palette.cyan}${adapterId}${palette.reset}...`));
+        const { DiscordAdapter } = await import('../channels/adapters/discord.js');
         const skillCommands = discoverDiscordSkillCommands(this.config.workspace);
         const slashCommands = buildDiscordSlashCommands(skillCommands);
         const adapter = new DiscordAdapter(
@@ -1261,6 +1298,7 @@ export class SymbioteGateway {
     if (channels.whatsapp?.enabled) {
       try {
         console.log(info('Starting WhatsApp adapter...'));
+        const { WhatsAppAdapter } = await import('../channels/adapters/whatsapp.js');
         const adapter = new WhatsAppAdapter('whatsapp-main');
         const waPhoneJid = channels.whatsapp.phoneNumber
           ? `${channels.whatsapp.phoneNumber}@s.whatsapp.net`
@@ -1375,6 +1413,7 @@ export class SymbioteGateway {
       const requestedProvider = interaction.options.getString('provider')?.trim().toLowerCase();
       const model = interaction.options.getString('model')?.trim();
       if (!requestedProvider && !model) {
+        await interaction.deferReply({ ephemeral: true });
         await this.showDiscordProviderPicker(interaction);
         return;
       }
@@ -1383,44 +1422,48 @@ export class SymbioteGateway {
       if (!this.getDiscordProviderNames().includes(providerName)) {
         throw new Error(`Provider "${providerName}" is not configured and active. Choose one from the provider picker.`);
       }
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: true });
+      }
       if (!model) {
         await this.showDiscordModelPicker(interaction, providerName);
         return;
       }
 
-      await interaction.deferReply({ ephemeral: true });
       const selected = this.updateProviderModel(providerName, model);
       await interaction.editReply(`Active provider set to \`${selected.provider}\` with model \`${selected.model}\`. Saved to \`symbiote.json\` and hot-reloaded.`);
       return;
     }
 
     if (commandName === 'reset') {
+      await interaction.deferReply({ ephemeral: true });
       if (!this.reloadConfig(`Discord /reset from ${senderId}`)) {
         throw new Error('Configuration could not be reloaded; this conversation was not reset. Check the Gateway logs.');
       }
       const channelId = interaction.channelId;
       const reset = channelId ? this.resetDiscordConversation(adapterId, channelId) : false;
-      await interaction.reply({
-        content: reset
+      await interaction.editReply({
+        content: `${reset
           ? 'Configuration reloaded and this Discord conversation was reset.'
-          : 'Configuration reloaded. There was no active conversation to reset.',
-        ephemeral: true,
+          : 'Configuration reloaded. There was no active conversation to reset.'} Restarting the Gateway now; the desktop supervisor will reconnect it.`,
       });
+      this.scheduleGatewayRestart(`Discord /reset from ${senderId}`);
       return;
     }
 
     if (commandName === 'restart') {
+      await interaction.deferReply({ ephemeral: true });
       if (!this.reloadConfig(`Discord /restart from ${senderId}`)) {
         throw new Error('Configuration could not be reloaded. Check the Gateway logs.');
       }
       const channelId = interaction.channelId;
       const reset = channelId ? this.resetDiscordConversation(adapterId, channelId) : false;
-      await interaction.reply({
-        content: reset
-          ? 'Config reloaded and this Discord conversation restarted.'
-          : 'Config reloaded. There was no active conversation to reset.',
-        ephemeral: true,
+      await interaction.editReply({
+        content: `${reset
+          ? 'Config reloaded and this Discord conversation was reset.'
+          : 'Config reloaded. There was no active conversation to reset.'} Restarting the Gateway now; the desktop supervisor will reconnect it.`,
       });
+      this.scheduleGatewayRestart(`Discord /restart from ${senderId}`);
       return;
     }
 
@@ -1497,9 +1540,17 @@ export class SymbioteGateway {
     try {
       const discovered = await discoverProviderModels(providerName, {
         apiKey: providerConfig.apiKey,
+        accountId: providerConfig.accountId,
         baseUrl: providerConfig.baseUrl,
       });
-      const models = [...new Set([...discovered, ...(configuredModel ? [configuredModel] : [])])]
+      const configuredModels = Array.isArray(providerConfig.models)
+        ? providerConfig.models.filter((model): model is string => typeof model === 'string')
+        : [];
+      const models = [...new Set([
+        ...(configuredModel ? [configuredModel] : []),
+        ...configuredModels,
+        ...discovered,
+      ])]
         .filter((model) => model.trim().length > 0);
       if (models.length === 0) throw new Error('The provider returned no model identifiers.');
       return { models };
@@ -1517,9 +1568,14 @@ export class SymbioteGateway {
   }
 
   private async showDiscordProviderPicker(interaction: ChatInputCommandInteraction): Promise<void> {
+    const { ActionRowBuilder, StringSelectMenuBuilder } = await import('discord.js');
     const providers = this.getDiscordProviderNames().slice(0, 25);
     if (providers.length === 0) {
-      await interaction.reply({ content: 'No active providers are configured in `symbiote.json`.', ephemeral: true });
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content: 'No active providers are configured in `symbiote.json`.', components: [] });
+      } else {
+        await interaction.reply({ content: 'No active providers are configured in `symbiote.json`.', ephemeral: true });
+      }
       return;
     }
 
@@ -1527,18 +1583,20 @@ export class SymbioteGateway {
       .setCustomId(`symbiote:provider:${interaction.user.id}`)
       .setPlaceholder('Choose a provider')
       .addOptions(providers.map((providerName) => ({ label: providerName, value: providerName })));
-    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
-    await interaction.reply({
+    const row = new ActionRowBuilder<DiscordStringSelectMenuBuilder>().addComponents(menu);
+    const response = {
       content: 'Choose an active provider. Available models will be discovered when you select one.',
       components: [row],
-      ephemeral: true,
-    });
+    };
+    if (interaction.deferred || interaction.replied) await interaction.editReply(response);
+    else await interaction.reply({ ...response, ephemeral: true });
   }
 
   private async showDiscordModelPicker(
     interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
     providerName: string,
   ): Promise<void> {
+    const { ActionRowBuilder, StringSelectMenuBuilder } = await import('discord.js');
     if (!interaction.deferred && !interaction.replied) {
       if ('customId' in interaction) await interaction.deferUpdate();
       else await interaction.deferReply({ ephemeral: true });
@@ -1567,7 +1625,7 @@ export class SymbioteGateway {
       .setCustomId(`symbiote:model:${interaction.user.id}:${providerName}`)
       .setPlaceholder(`Choose a ${providerName} model`)
       .addOptions(options);
-    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+    const row = new ActionRowBuilder<DiscordStringSelectMenuBuilder>().addComponents(menu);
     const content = `${result.warning ? `${result.warning}\n` : ''}Choose a model for \`${providerName}\`.`;
     await interaction.editReply({ content, components: [row] });
   }
@@ -1589,7 +1647,15 @@ export class SymbioteGateway {
     }
 
     const providerName = interaction.options.getString('provider')?.trim().toLowerCase() || this.providerName;
-    const { models } = await this.getDiscordProviderModels(providerName);
+    const providerConfig = this.config.providers[providerName] ?? {};
+    const configuredModel = this.getConfiguredDiscordModel(providerName);
+    const configuredModels = Array.isArray(providerConfig.models)
+      ? providerConfig.models.filter((model): model is string => typeof model === 'string')
+      : [];
+    const models = [...new Set([
+      ...(configuredModel ? [configuredModel] : []),
+      ...configuredModels,
+    ])];
     const choices = models
       .filter((model) => model.length <= 100 && model.toLocaleLowerCase().includes(query))
       .slice(0, 25)
@@ -1599,6 +1665,9 @@ export class SymbioteGateway {
       choices.splice(25);
     }
     await interaction.respond(choices);
+    void this.getDiscordProviderModels(providerName).catch((error) => {
+      console.warn(`[discord] Background model discovery failed for ${providerName}: ${error instanceof Error ? error.message : String(error)}`);
+    });
   }
 
   private async handleDiscordProviderPickerSelection(interaction: StringSelectMenuInteraction): Promise<void> {
@@ -1648,6 +1717,14 @@ export class SymbioteGateway {
     session.metadata.toolsUsed = {};
     this.sessionManager.save(session);
     return true;
+  }
+
+  private scheduleGatewayRestart(reason: string): void {
+    console.log(`${palette.dim}  [gateway]${palette.reset} Restart scheduled: ${reason}.`);
+    const timer = setTimeout(() => {
+      process.kill(process.pid, 'SIGTERM');
+    }, 750);
+    timer.unref();
   }
 
   // ── HTTP API ───────────────────────────────────────────────────────────
@@ -2767,9 +2844,9 @@ export class SymbioteGateway {
           routeChoice = selectProviderRoute(
             decision,
             PROVIDERS,
-            this.config.providers as Record<string, { apiKey?: string; model?: string } | undefined>,
+            this.config.providers as Record<string, { apiKey?: string; model?: string; models?: readonly string[] } | undefined>,
             routeChoice,
-            this.config.fallbackProviders ?? [],
+            this.config.sarsiProviders ?? this.config.fallbackProviders ?? [],
           );
           console.log(`${palette.dim}  [parc]${palette.reset} ${decision.taskType} → ${routeChoice.name}/${routeChoice.model} (conf: ${decision.confidence.toFixed(2)}${routeChoice.routed ? '' : ', using configured provider'})`);
         } catch {
@@ -3320,9 +3397,9 @@ export class SymbioteGateway {
         routeChoice = selectProviderRoute(
           parcDecision,
           PROVIDERS,
-          this.config.providers as Record<string, { apiKey?: string; model?: string } | undefined>,
+          this.config.providers as Record<string, { apiKey?: string; model?: string; models?: readonly string[] } | undefined>,
           routeChoice,
-          this.config.fallbackProviders ?? [],
+          this.config.sarsiProviders ?? this.config.fallbackProviders ?? [],
         );
         console.log(`${palette.dim}  [parc]${palette.reset} ${parcDecision.taskType} → ${routeChoice.name}/${routeChoice.model} (conf: ${parcDecision.confidence.toFixed(2)}${routeChoice.routed ? '' : ', using configured provider'})`);
       } catch {
@@ -3848,6 +3925,15 @@ export class SymbioteGateway {
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('uncaughtExceptionMonitor', (error, origin) => {
       this.recordGatewayIssue('process', `Uncaught ${origin}: ${error.stack ?? error.message}`);
+    });
+    process.on('uncaughtException', error => {
+      if (isUnhandledWsHandshakeTimeout(error)) {
+        const message = 'A WebSocket handshake timed out with no error listener attached; containing the detached-socket timeout so it cannot terminate the Gateway.';
+        console.error(`[gateway] ${message}`, error.stack ?? error.message);
+        this.recordGatewayIssue('websocket', message);
+        return;
+      }
+      throw error;
     });
     process.on('unhandledRejection', reason => {
       this.recordGatewayIssue('process', `Unhandled rejection: ${reason instanceof Error ? reason.message : String(reason)}`);

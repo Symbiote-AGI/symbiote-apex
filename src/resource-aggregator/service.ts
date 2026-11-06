@@ -16,6 +16,14 @@ import type {
 
 const VECTOR_DIMENSIONS = 512;
 
+export function latestPipelineActivity(startedAt?: string, completedAt?: string): number | undefined {
+  const started = Date.parse(startedAt ?? '');
+  const completed = Date.parse(completedAt ?? '');
+  if (!Number.isFinite(started)) return Number.isFinite(completed) ? completed : undefined;
+  if (!Number.isFinite(completed)) return started;
+  return Math.max(started, completed);
+}
+
 export class ResourceAggregatorService {
   private readonly config: ReturnType<typeof createResourceAggregatorConfig>;
   private readonly aggregator: Aggregator;
@@ -165,8 +173,8 @@ export class ResourceAggregatorService {
 
   private async supervise(): Promise<void> {
     if (!this.started || this.stopped || this.pipeline.isRunning || Date.now() < this.retryAt) return;
-    const lastActivity = Date.parse(this.pipeline.lastStartedAt ?? this.pipeline.lastReport?.completedAt ?? '');
-    if (Number.isFinite(lastActivity) && Date.now() - lastActivity < this.config.collectionIntervalMs * 2) return;
+    const lastActivity = latestPipelineActivity(this.pipeline.lastStartedAt, this.pipeline.lastReport?.completedAt);
+    if (lastActivity !== undefined && Date.now() - lastActivity < this.config.collectionIntervalMs * 2) return;
 
     try {
       console.warn('[gamma] Resource feed heartbeat detected a stalled pipeline; restarting collection.');

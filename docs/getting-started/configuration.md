@@ -57,9 +57,22 @@ The setup flow writes every section below. Values shown are the defaults.
     "groq": { "baseUrl": "https://api.groq.com/openai", "apiKey": "${GROQ_API_KEY}" },
     "xai": { "apiKey": "${XAI_API_KEY}" },
     "nvidia": { "apiKey": "${NVIDIA_API_KEY}" },
+    "cloudflare": {
+      "accountId": "${CLOUDFLARE_ACCOUNT_ID}",
+      "apiKey": "${CLOUDFLARE_API_TOKEN}",
+      "model": "@cf/zai-org/glm-4.7-flash",
+      "models": [
+        "@cf/zai-org/glm-4.7-flash",
+        "@cf/zai-org/glm-5.3-flash",
+        "@cf/openai/gpt-oss-20b",
+        "@cf/qwen/qwen3-30b-a3b-fp8",
+        "@cf/deepseek-ai/deepseek-v4-flash-0731"
+      ]
+    },
     "github-copilot": {},
     "ollama": { "baseUrl": "http://127.0.0.1:11434" }
   },
+  "sarsiProviders": ["cloudflare"],
 
   "discord": { "enabled": false, "token": "${DISCORD_BOT_TOKEN}", "botId": "${DISCORD_CLIENT_ID}", "policy": { "dmPolicy": "allowlist", "groupPolicy": "mention-only", "requireMention": true, "allowedSenders": [], "allowedGroups": [], "ownerIds": [] } },
   "whatsapp": { "enabled": false, "authDir": "~/.symbiote/whatsapp-auth", "autoRead": true, "markOnline": true, "policy": { "dmPolicy": "allowlist", "groupPolicy": "mention-only", "allowedSenders": [], "allowedGroups": [], "ownerIds": [] } },
@@ -126,6 +139,8 @@ GEMINI_API_KEY=
 GROQ_API_KEY=
 XAI_API_KEY=
 NVIDIA_API_KEY=
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_API_TOKEN=
 
 # GitHub Copilot: optional; `gh auth login` can provide credentials automatically
 COPILOT_GITHUB_TOKEN=
@@ -213,6 +228,7 @@ Each provider can be configured with:
 | Option | Description |
 |--------|-------------|
 | `apiKey` | Override env var (not recommended — use `.env`) |
+| `accountId` | Cloudflare account ID; use `CLOUDFLARE_ACCOUNT_ID` in `.env` |
 | `baseUrl` | Custom endpoint URL |
 
 See [Providers Overview](../providers/overview.md) for supported providers and their options.

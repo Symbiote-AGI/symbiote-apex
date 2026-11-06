@@ -279,6 +279,10 @@ test('workspace APIs validate tasks and expose real run and agent controls', asy
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   try {
+    const health = await fetch(`${baseUrl}/api/healthz`);
+    assert.equal(health.status, 200);
+    assert.deepEqual(await health.json(), { pid: process.pid });
+
     const nativeFallback = await fetch(`${baseUrl}/native`);
     assert.equal(nativeFallback.status, 200);
     assert.match(nativeFallback.headers.get('content-type') ?? '', /text\/html/);

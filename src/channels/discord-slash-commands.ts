@@ -75,8 +75,8 @@ export function buildDiscordSlashCommands(
         { name: 'model', description: 'Model identifier', autocomplete: true },
       ],
     },
-    { name: 'reset', description: 'Reload config and reset this conversation' },
-    { name: 'restart', description: 'Reload config and restart this conversation' },
+    { name: 'reset', description: 'Reset this conversation and restart the Gateway' },
+    { name: 'restart', description: 'Reload config, reset this conversation, and restart the Gateway' },
     ...skills.map(({ name, description }) => ({
       name,
       description,

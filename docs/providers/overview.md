@@ -1,6 +1,6 @@
 # Providers Overview
 
-Symbiote's CLI and gateway registries expose 10 LLM providers through a unified streaming interface. Providers are hot-swappable mid-session — switch models without losing conversation context. A routed provider is selected only when it is registered and configured; otherwise the configured default is used.
+Symbiote's CLI and gateway registries expose LLM providers through a unified streaming interface. Providers are hot-swappable mid-session — switch models without losing conversation context. A routed provider is selected only when it is registered and configured; otherwise the configured default is used.
 
 ## Supported Providers
 
@@ -16,6 +16,7 @@ Symbiote's CLI and gateway registries expose 10 LLM providers through a unified 
 | [Ollama](ollama.md) | `ollama` | Local service | Optional | Varies |
 | [Gladius](gladius.md) | `gladius` | Local HTTP endpoint | Optional | Local |
 | NVIDIA | `nvidia` | `NVIDIA_API_KEY` | No | Varies |
+| [Cloudflare Workers AI](cloudflare.md) | `cloudflare` | Account ID + `CLOUDFLARE_API_TOKEN` | No | Varies |
 
 Provider modules for Qwen, AI Horde, FreeAI, and OmniRoute exist in source but are not currently registered for CLI/gateway selection.
 
@@ -33,11 +34,24 @@ Register providers in `symbiote.json`:
     "anthropic": {},
     "openai": {},
     "gemini": {},
+    "cloudflare": {
+      "accountId": "${CLOUDFLARE_ACCOUNT_ID}",
+      "apiKey": "${CLOUDFLARE_API_TOKEN}",
+      "model": "@cf/zai-org/glm-4.7-flash",
+      "models": [
+        "@cf/zai-org/glm-4.7-flash",
+        "@cf/zai-org/glm-5.3-flash",
+        "@cf/openai/gpt-oss-20b",
+        "@cf/qwen/qwen3-30b-a3b-fp8",
+        "@cf/deepseek-ai/deepseek-v4-flash-0731"
+      ]
+    },
     "xai": {},
     "ollama": { "baseUrl": "http://127.0.0.1:11434" },
     "github-copilot": {},
     "gladius": { "baseUrl": "http://127.0.0.1:8741" }
   },
+  "sarsiProviders": ["cloudflare"],
   "defaultProvider": "openrouter",
   "defaultModel": "openrouter/free"
 }
@@ -71,7 +85,7 @@ interface Provider {
 }
 ```
 
-Groq, xAI, and Ollama are built on the OpenAI-compatible adapter — they use the same streaming protocol with provider-specific base URLs and authentication.
+Groq, xAI, Ollama, and Cloudflare Workers AI use the OpenAI-compatible adapter — they share the streaming protocol with provider-specific base URLs and authentication.
 
 ## Retry Logic
 

@@ -195,8 +195,12 @@ export class DiscordAdapter extends BaseAdapter {
       console.error(`[${this.id}] Error:`, err.message);
       this.health.transition('degraded');
     });
-    this.client.on(Events.ShardDisconnect, () => {
-      this.health.transition('disconnected', 'Shard disconnected');
+    this.client.on(Events.ShardError, (err, shardId) => {
+      console.error(`[${this.id}] Shard ${shardId} WebSocket error:`, err.message);
+      this.health.transition('degraded', `Shard ${shardId}: ${err.message}`);
+    });
+    this.client.on(Events.ShardDisconnect, (closeEvent, shardId) => {
+      this.health.transition('disconnected', `Shard ${shardId} disconnected (code ${closeEvent.code})`);
     });
     this.client.on(Events.ShardReconnecting, () => {
       this.health.transition('reconnecting');

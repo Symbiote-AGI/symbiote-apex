@@ -67,9 +67,9 @@ async function* streamOpenAI(
   const body: Record<string, unknown> = {
     model: config.model,
     stream: true,
-    stream_options: { include_usage: true },
     messages: convertMessages(messages),
   };
+  if (config.includeUsage !== false) body.stream_options = { include_usage: true };
   if (config.maxTokens) body.max_tokens = config.maxTokens;
   if (config.temperature !== undefined) body.temperature = config.temperature;
   if (tools.length > 0) body.tools = convertTools(tools);

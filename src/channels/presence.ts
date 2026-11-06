@@ -7,7 +7,7 @@
 // Discord: setActivity("Reading files...") + sendTyping() refresh
 // WhatsApp: composing indicator refresh (no custom text)
 
-import { ActivityType, Events, type Client as DiscordClient } from 'discord.js';
+import type { ActivityType, Client as DiscordClient } from 'discord.js';
 import { TOOL_EMOJI } from './progress-bubble.js';
 
 export interface TypingTarget {
@@ -53,38 +53,37 @@ export type ActivityState =
 
 interface ActivityDisplay {
   text: string;
-  type: ActivityType;
 }
 
 // Map tool names → human-readable activity
 const TOOL_ACTIVITY: Record<string, ActivityDisplay> = {
-  read:            { text: '📖 Reading files...', type: ActivityType.Custom },
-  write:           { text: '✍️ Writing...', type: ActivityType.Custom },
-  edit:            { text: '✏️ Editing...', type: ActivityType.Custom },
-  exec:            { text: '⚡ Executing...', type: ActivityType.Custom },
-  process_start:   { text: '🚀 Launching process...', type: ActivityType.Custom },
-  process_poll:    { text: '📊 Checking process...', type: ActivityType.Custom },
-  process_kill:   { text: '🛑 Stopping process...', type: ActivityType.Custom },
-  process_list:   { text: '📋 Listing processes...', type: ActivityType.Custom },
-  image:           { text: '👁️ Analyzing image...', type: ActivityType.Custom },
-  web_fetch:       { text: '🌐 Browsing the web...', type: ActivityType.Custom },
-  memory_search:   { text: '🧠 Searching memory...', type: ActivityType.Custom },
-  comb_recall:     { text: '🧠 Recalling...', type: ActivityType.Custom },
-  comb_stage:      { text: '💾 Staging memory...', type: ActivityType.Custom },
-  tts:             { text: '🔊 Generating speech...', type: ActivityType.Custom },
-  message:         { text: '💬 Sending message...', type: ActivityType.Custom },
-  typing:          { text: '💬 Communicating...', type: ActivityType.Custom },
-  presence:        { text: '💬 Updating presence...', type: ActivityType.Custom },
-  delete_message:  { text: '🗑️ Cleaning up...', type: ActivityType.Custom },
-  mark_read:       { text: '👀 Reading messages...', type: ActivityType.Custom },
-  spawn:           { text: '🧬 Spawning sub-agent...', type: ActivityType.Custom },
-  subagent_status: { text: '🔍 Checking sub-agent...', type: ActivityType.Custom },
+  read:            { text: '📖 Reading files...' },
+  write:           { text: '✍️ Writing...' },
+  edit:            { text: '✏️ Editing...' },
+  exec:            { text: '⚡ Executing...' },
+  process_start:   { text: '🚀 Launching process...' },
+  process_poll:    { text: '📊 Checking process...' },
+  process_kill:   { text: '🛑 Stopping process...' },
+  process_list:   { text: '📋 Listing processes...' },
+  image:           { text: '👁️ Analyzing image...' },
+  web_fetch:       { text: '🌐 Browsing the web...' },
+  memory_search:   { text: '🧠 Searching memory...' },
+  comb_recall:     { text: '🧠 Recalling...' },
+  comb_stage:      { text: '💾 Staging memory...' },
+  tts:             { text: '🔊 Generating speech...' },
+  message:         { text: '💬 Sending message...' },
+  typing:          { text: '💬 Communicating...' },
+  presence:        { text: '💬 Updating presence...' },
+  delete_message:  { text: '🗑️ Cleaning up...' },
+  mark_read:       { text: '👀 Reading messages...' },
+  spawn:           { text: '🧬 Spawning sub-agent...' },
+  subagent_status: { text: '🔍 Checking sub-agent...' },
 };
 
-const THINKING_ACTIVITY: ActivityDisplay = { text: '🤔 Thinking...', type: ActivityType.Custom };
-const REASONING_ACTIVITY: ActivityDisplay = { text: '🧩 Reasoning...', type: ActivityType.Custom };
-const WRITING_ACTIVITY: ActivityDisplay = { text: '✍️ Writing response...', type: ActivityType.Custom };
-const IDLE_ACTIVITY: ActivityDisplay = { text: process.env.IDLE_EMOJI ?? '', type: ActivityType.Custom };
+const THINKING_ACTIVITY: ActivityDisplay = { text: '🤔 Thinking...' };
+const REASONING_ACTIVITY: ActivityDisplay = { text: '🧩 Reasoning...' };
+const WRITING_ACTIVITY: ActivityDisplay = { text: '✍️ Writing response...' };
+const IDLE_ACTIVITY: ActivityDisplay = { text: process.env.IDLE_EMOJI ?? '' };
 
 // ─── Presence Manager ──────────────────────────────────────────────────────
 
@@ -120,8 +119,8 @@ export class PresenceManager {
    */
   registerDiscordClient(adapterId: string, client: DiscordClient): void {
     this.discordClients.set(adapterId, client);
-    client.on(Events.ShardResume, () => this.applyActivity(client));
-    client.once(Events.ClientReady, () => this.applyActivity(client));
+    client.on('shardResume', () => this.applyActivity(client));
+    client.once('clientReady', () => this.applyActivity(client));
     if (client.isReady()) this.applyActivity(client);
   }
 
@@ -242,7 +241,6 @@ export class PresenceManager {
     this.clearActivityTimeout(target);
     const activity = TOOL_ACTIVITY[toolName] ?? {
       text: `${TOOL_EMOJI[toolName] ?? '🧰'} Using ${toolName.replaceAll('_', ' ')}...`,
-      type: ActivityType.Custom,
     };
     this.updateTurnActivity(target, activity, true);
   }
@@ -365,7 +363,7 @@ export class PresenceManager {
         client.user.setPresence({ activities: [], status: status === 'offline' ? 'online' : status });
         return;
       }
-      client.user.setActivity(this.currentActivity.text, { type: ActivityType.Playing });
+      client.user.setActivity(this.currentActivity.text, { type: 0 as ActivityType });
     } catch (error) {
       console.error('[presence] Discord activity update failed:', error);
     }

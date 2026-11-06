@@ -232,9 +232,9 @@ async function main() {
     const routeChoice = selectProviderRoute(
       route ?? { provider: currentProviderName, model: currentModel },
       providers,
-      config.providers as Record<string, { apiKey?: string; model?: string } | undefined>,
+      config.providers as Record<string, { apiKey?: string; model?: string; models?: readonly string[] } | undefined>,
       { name: currentProviderName, provider: currentProvider!, model: currentModel },
-      config.fallbackProviders ?? [],
+      config.sarsiProviders ?? config.fallbackProviders ?? [],
     );
     const routeConfig = routeChoice.routed
       ? {

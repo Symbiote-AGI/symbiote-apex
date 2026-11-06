@@ -55,11 +55,14 @@ export type StreamEvent =
 
 export interface ProviderConfig {
   apiKey?: string;
+  accountId?: string;
   baseUrl?: string;
   model: string;
   maxTokens?: number;
+  contextWindow?: number;
   temperature?: number;
   timeoutMs?: number;
+  includeUsage?: boolean;
   systemPrompt?: string;
   signal?: AbortSignal;
 }

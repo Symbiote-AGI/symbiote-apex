@@ -137,6 +137,10 @@ small.note { display: block; color: var(--muted); margin-top: 10px; line-height:
         <label for="providerApiKey">Provider API key (optional)</label>
         <input id="providerApiKey" name="providerApiKey" type="password" />
       </div>
+      <div id="providerAccountIdField" hidden>
+        <label for="providerAccountId">Cloudflare account ID</label>
+        <input id="providerAccountId" name="providerAccountId" autocomplete="off" />
+      </div>
       <div>
         <label for="workspace">Workspace directory</label>
         <input id="workspace" name="workspace" />
@@ -189,7 +193,7 @@ small.note { display: block; color: var(--muted); margin-top: 10px; line-height:
 </main>
 <script>
 const fields = [
-  'provider','model','providerApiKey','workspace','apiPort','apiHost','webPort','webHost','ownerIds',
+  'provider','model','providerApiKey','providerAccountId','workspace','apiPort','apiHost','webPort','webHost','ownerIds',
   'discordToken','discordBotId','whatsappPhoneNumber','whatsappAuthDir','agentName','agentEmoji','creatorName','agentPersonality'
 ];
 const checks = ['discordEnabled','whatsappEnabled','agentEnabled'];
@@ -231,6 +235,11 @@ async function loadDefaults() {
 
   const d = data.defaults;
   providerSelect.value = d.provider;
+  document.getElementById('providerAccountId').value = d.providerAccountId || '';
+  document.getElementById('providerAccountIdField').hidden = providerSelect.value !== 'cloudflare';
+  providerSelect.onchange = () => {
+    document.getElementById('providerAccountIdField').hidden = providerSelect.value !== 'cloudflare';
+  };
   document.getElementById('model').value = d.model;
   document.getElementById('providerApiKey').value = '';
   document.getElementById('providerApiKey').placeholder = d.hasProviderApiKey ? 'Already configured; leave blank to keep' : '';

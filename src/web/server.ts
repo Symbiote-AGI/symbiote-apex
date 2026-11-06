@@ -338,6 +338,19 @@ function isIntegrationProvider(value: string): value is IntegrationProvider {
 
 const PROVIDERS = [
   { id: 'anthropic', name: 'Anthropic', models: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-3-5-haiku-20241022'] },
+  { id: 'cloudflare', name: 'Cloudflare Workers AI', models: [
+    '@cf/zai-org/glm-4.7-flash',
+    '@cf/zai-org/glm-5.3-flash',
+    '@cf/google/gemma-4-26b-a4b-it',
+    '@cf/nvidia/nemotron-3-120b-a12b',
+    '@cf/openai/gpt-oss-120b',
+    '@cf/openai/gpt-oss-20b',
+    '@cf/qwen/qwen3.8-27b',
+    '@cf/qwen/qwen3-30b-a3b-fp8',
+    '@cf/deepseek-ai/deepseek-v4-flash-0731',
+    '@cf/deepseek-ai/deepseek-v4-pro-0813',
+    '@cf/ibm-granite/granite-4.0-h-micro',
+  ] },
 
   { id: 'github-copilot', name: 'GitHub Copilot', models: ['claude-opus-4-6', 'claude-sonnet-4-20250514', 'gpt-4o', 'o3-mini'] },
   { id: 'gladius', name: 'Local (Gladius)', models: ['gladius-125m', 'gladius-1b'] },
@@ -694,6 +707,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return json(res, { error: 'A valid LAN access token is required.' }, 401);
     }
 
+    if (method === 'GET' && pathname === '/api/healthz') {
+      return json(res, { pid: process.pid });
+    }
     if (method === 'GET' && pathname === '/api/status') {
       return json(res, control.getStatus());
     }

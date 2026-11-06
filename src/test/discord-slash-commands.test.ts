@@ -35,7 +35,8 @@ test('Discord skill command discovery maps known aliases and reads skill instruc
       { name: 'provider', description: 'Provider name', autocomplete: true },
       { name: 'model', description: 'Model identifier', autocomplete: true },
     ]);
-    assert.equal(commands.find((command) => command.name === 'reset')?.description, 'Reload config and reset this conversation');
+    assert.equal(commands.find((command) => command.name === 'reset')?.description, 'Reset this conversation and restart the Gateway');
+    assert.equal(commands.find((command) => command.name === 'restart')?.description, 'Reload config, reset this conversation, and restart the Gateway');
     assert.match(buildDiscordSkillTask(research, 'Find the latest release'), /Find the latest release/);
     assert.match(buildDiscordSkillTask(research, 'Find the latest release'), /Investigate thoroughly/);
   } finally {

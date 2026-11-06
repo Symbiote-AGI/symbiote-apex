@@ -19,6 +19,7 @@ import { ollamaProvider } from '../providers/ollama.js';
 import { artifactEngineProvider } from '../providers/artifact-engine.js';
 import { xaiProvider } from '../providers/xai.js';
 import { freeaiProvider } from '../providers/freeai.js';
+import { cloudflareProvider } from '../providers/cloudflare.js';
 
 let orchestratorInstance: DualLLMOrchestrator | null = null;
 
@@ -142,8 +143,10 @@ function getProviderByName(name: string): Provider {
       return xaiProvider;
     case 'freeai':
       return freeaiProvider;
+    case 'cloudflare':
+      return cloudflareProvider;
     default:
-      throw new Error(`Unknown provider: ${name}. Available: openrouter, anthropic, openai, github-copilot, vscode-proxy, gemini, gladius, groq, ollama, artifact-engine, xai, freeai`);
+      throw new Error(`Unknown provider: ${name}. Available: openrouter, anthropic, openai, github-copilot, vscode-proxy, gemini, gladius, groq, ollama, artifact-engine, xai, freeai, cloudflare`);
   }
 }
 

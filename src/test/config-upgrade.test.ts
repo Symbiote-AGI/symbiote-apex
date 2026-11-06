@@ -7,7 +7,7 @@ import { upgradeConfig, upgradeConfigFile } from '../config/upgrade.js';
 import { loadConfig } from '../config/config.js';
 import { buildConfigTemplate, CONFIG_VERSION } from '../config/template.js';
 import { validateConfig } from '../config/validator.js';
-import { buildEnvFile, defaultSetupInput } from '../cli/setup.js';
+import { buildConfig, buildEnvFile, defaultSetupInput } from '../cli/setup.js';
 
 const legacy = (dir: string) => ({
   defaultProvider: 'openrouter',
@@ -75,6 +75,25 @@ test('the template passes validation and the env file keeps unknown keys', () =>
   const env = buildEnvFile(input, { CUSTOM_THING: 'keep-me', SYMBIOTE_API_KEY: 'k'.repeat(64) });
   assert.match(env, /CUSTOM_THING=keep-me/);
   assert.match(env, /SYMBIOTE_API_KEY=k{64}/);
+});
+
+test('Cloudflare is available in setup with account ID and token environment references', () => {
+  const input = {
+    ...defaultSetupInput(undefined, path.join(os.tmpdir(), 'no-such.env')),
+    provider: 'cloudflare',
+    model: '@cf/openai/gpt-oss-20b',
+    providerApiKey: 'cloudflare-test-token',
+    providerAccountId: '0123456789abcdef0123456789abcdef',
+  };
+  const config = buildConfig(input);
+  const env = buildEnvFile(input);
+
+  assert.deepEqual(config.sarsiProviders, ['cloudflare']);
+  assert.equal(config.providers.cloudflare.model, input.model);
+  assert.equal(config.providers.cloudflare.apiKey, '${CLOUDFLARE_API_TOKEN}');
+  assert.equal(config.providers.cloudflare.accountId, '${CLOUDFLARE_ACCOUNT_ID}');
+  assert.match(env, /CLOUDFLARE_API_TOKEN=cloudflare-test-token/);
+  assert.match(env, /CLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef/);
 });
 
 test('config fallback does not choose a model outside symbiote.json', () => {

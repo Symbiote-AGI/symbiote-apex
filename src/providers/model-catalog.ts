@@ -2,6 +2,7 @@ import { discoverGitHubCopilotModels } from './github-copilot.js';
 
 export interface ProviderModelConfig {
   apiKey?: string;
+  accountId?: string;
   baseUrl?: string;
 }
 
@@ -14,6 +15,7 @@ const MODEL_CACHE_TTL_MS = 60_000;
 const DEFAULT_MODEL_BASE_URLS: Record<string, string> = {
   anthropic: 'https://api.anthropic.com/v1',
   'artifact-engine': 'http://127.0.0.1:8080/v1',
+  cloudflare: 'https://api.cloudflare.com/client/v4/accounts',
   freeai: 'https://api.freetheai.xyz/v1',
   gemini: 'https://generativelanguage.googleapis.com/v1beta',
   groq: 'https://api.groq.com/openai/v1',
@@ -30,8 +32,19 @@ const inFlight = new Map<string, Promise<string[]>>();
 function modelEndpoint(providerName: string, config: ProviderModelConfig): string | undefined {
   if (providerName === 'github-copilot') return undefined;
 
-  const baseUrl = (config.baseUrl ?? DEFAULT_MODEL_BASE_URLS[providerName])?.replace(/\/+$/, '');
+  let baseUrl = (config.baseUrl ?? DEFAULT_MODEL_BASE_URLS[providerName])?.replace(/\/+$/, '');
   if (!baseUrl) return undefined;
+
+  if (providerName === 'cloudflare') {
+    const accountId = config.accountId?.trim() || process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+    if (!accountId || !/^[a-f0-9]{32}$/i.test(accountId)) {
+      throw new Error('Cloudflare model discovery requires a 32-character hexadecimal account ID.');
+    }
+    if (!config.apiKey?.trim() && !process.env.CLOUDFLARE_API_TOKEN?.trim()) {
+      throw new Error('Cloudflare model discovery requires CLOUDFLARE_API_TOKEN or providers.cloudflare.apiKey.');
+    }
+    return `${DEFAULT_MODEL_BASE_URLS.cloudflare}/${accountId}/ai/models/search?per_page=100&hide_experimental=true`;
+  }
 
   if (providerName === 'ollama') {
     return baseUrl.endsWith('/api/tags') ? baseUrl : `${baseUrl}/api/tags`;
@@ -47,6 +60,8 @@ function parseModelIds(payload: unknown, providerName: string): string[] {
   const response = payload as Record<string, unknown>;
   const candidates = Array.isArray(response.data)
     ? response.data
+    : Array.isArray(response.result)
+      ? response.result
     : Array.isArray(response.models)
       ? response.models
       : Array.isArray(response.tags)
@@ -89,6 +104,9 @@ async function fetchProviderModels(
     headers['x-goog-api-key'] = config.apiKey;
   } else if (providerName === 'freeai' && !config.apiKey?.trim()) {
     throw new Error('FreeAI model discovery requires an API key. Set FREEAI_API_KEY in .env.');
+  } else if (providerName === 'cloudflare') {
+    const apiKey = config.apiKey?.trim() || process.env.CLOUDFLARE_API_TOKEN?.trim();
+    headers.Authorization = `Bearer ${apiKey}`;
   } else if (config.apiKey) {
     headers.Authorization = `Bearer ${config.apiKey}`;
   }

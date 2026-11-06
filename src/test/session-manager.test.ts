@@ -22,6 +22,28 @@ test('hidden and heartbeat sessions stay out of normal session listings', () => 
   }
 });
 
+test('cached session summaries track saves and deletions', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'symbiote-session-summary-cache-'));
+  try {
+    const manager = new SessionManager(directory);
+    const session = manager.create('cached-session');
+    assert.deepEqual(manager.list().map(item => item.id), ['cached-session']);
+
+    session.messages.push({ role: 'user', content: 'Updated conversation' });
+    manager.save(session);
+    assert.equal(manager.list()[0].messageCount, 1);
+
+    session.metadata.hiddenFromList = true;
+    manager.save(session);
+    assert.deepEqual(manager.list(), []);
+
+    assert.equal(manager.delete(session.id), true);
+    assert.deepEqual(manager.list(), []);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('archiving keeps assistant tool calls with all their results', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'symbiote-session-archive-'));
   try {

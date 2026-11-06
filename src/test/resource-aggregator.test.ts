@@ -6,7 +6,7 @@ import test from 'node:test';
 import { Aggregator } from '../resource-aggregator/aggregator.js';
 import { createResourceAggregatorConfig } from '../resource-aggregator/config.js';
 import { Pipeline } from '../resource-aggregator/pipeline.js';
-import { ResourceAggregatorService } from '../resource-aggregator/service.js';
+import { latestPipelineActivity, ResourceAggregatorService } from '../resource-aggregator/service.js';
 import { vectorize, vectorizeRecords } from '../resource-aggregator/vectorizer.js';
 import type { SourceConfig, SourceSnapshot } from '../resource-aggregator/types.js';
 
@@ -127,6 +127,15 @@ test('resource collection cadence validates and persists across service restarts
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test('pipeline supervision treats the most recent start or successful completion as activity', () => {
+  const startedAt = '2026-11-07T00:00:00.000Z';
+  const completedAt = '2026-11-07T00:01:00.000Z';
+  assert.equal(latestPipelineActivity(startedAt, completedAt), Date.parse(completedAt));
+  assert.equal(latestPipelineActivity(completedAt, startedAt), Date.parse(completedAt));
+  assert.equal(latestPipelineActivity(undefined, completedAt), Date.parse(completedAt));
+  assert.equal(latestPipelineActivity(undefined, undefined), undefined);
 });
 
 test('record vectorization indexes nested public records without inventing coordinates', () => {

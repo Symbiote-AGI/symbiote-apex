@@ -92,3 +92,45 @@ test('SARSI route selection falls back without credentials and selects configure
     else process.env.GROQ_API_KEY = previousGroqKey;
   }
 });
+
+test('SARSI provider routing accepts a configured Cloudflare token', () => {
+  const fallbackProvider: Provider = { name: 'openrouter', async *stream() {} };
+  const cloudflareProvider: Provider = { name: 'cloudflare', async *stream() {} };
+  const routed = selectProviderRoute(
+    { provider: 'cloudflare', model: '@cf/deepseek-ai/deepseek-v4-pro-0813' },
+    new Map([['cloudflare', cloudflareProvider]]),
+    { cloudflare: { apiKey: 'test-token', model: '@cf/deepseek-ai/deepseek-v4-pro-0813' } },
+    { name: 'openrouter', provider: fallbackProvider, model: 'openrouter/free' },
+    ['cloudflare'],
+  );
+  assert.equal(routed.name, 'cloudflare');
+  assert.equal(routed.routed, true);
+});
+
+test('SARSI accepts Cloudflare models from its explicit model allowlist only', () => {
+  const fallbackProvider: Provider = { name: 'openrouter', async *stream() {} };
+  const cloudflareProvider: Provider = { name: 'cloudflare', async *stream() {} };
+  const registry = new Map([['cloudflare', cloudflareProvider]]);
+  const config = {
+    cloudflare: {
+      apiKey: 'test-token',
+      model: '@cf/zai-org/glm-4.7-flash',
+      models: ['@cf/qwen/qwen3-30b-a3b-fp8', '@cf/deepseek-ai/deepseek-v4-flash-0731'],
+    },
+  };
+  const fallback = { name: 'openrouter', provider: fallbackProvider, model: 'openrouter/free' };
+  const allowed = selectProviderRoute(
+    { provider: 'cloudflare', model: '@cf/deepseek-ai/deepseek-v4-flash-0731' },
+    registry, config, fallback, ['cloudflare'],
+  );
+  assert.equal(allowed.name, 'cloudflare');
+  assert.equal(allowed.model, '@cf/deepseek-ai/deepseek-v4-flash-0731');
+  assert.equal(allowed.routed, true);
+
+  const denied = selectProviderRoute(
+    { provider: 'cloudflare', model: '@cf/deepseek-ai/deepseek-v4-pro-0813' },
+    registry, config, fallback, ['cloudflare'],
+  );
+  assert.equal(denied.name, 'openrouter');
+  assert.equal(denied.routed, false);
+});

@@ -16,6 +16,7 @@ This directory documents the normalized provider layer used by the runtime.
 | Gladius | [gladius.md](gladius.md) | Local |
 | OpenRouter | [openrouter.md](openrouter.md) | `OPENROUTER_API_KEY` |
 | NVIDIA | [nvidia.md](nvidia.md) | `NVIDIA_API_KEY` |
+| Cloudflare Workers AI | [cloudflare.md](cloudflare.md) | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` |
 | Qwen | [qwen.md](qwen.md) | `QWEN_API_KEY` |
 | AIHorde | [aihorde.md](aihorde.md) | Horde key (optional) |
 | FreeAI | [freeai.md](freeai.md) | `FREEAI_API_KEY` |

@@ -60,8 +60,11 @@ import type { NeuralMemoryConfig } from '../memory/neural-memory.js';
 
 export interface ProviderConfigBlock {
   apiKey?: string;
+  accountId?: string;
   baseUrl?: string;
   model?: string;
+  models?: string[];
+  maxTokens?: number;
   timeoutMs?: number;
   contextWindow?: number;
   [key: string]: unknown;
@@ -88,6 +91,7 @@ export interface SymbioteConfig {
   emoji?: string;
   providers: Record<string, ProviderConfigBlock | undefined> & {
     anthropic?: ProviderConfigBlock;
+    cloudflare?: ProviderConfigBlock;
     openai?: ProviderConfigBlock;
     gemini?: ProviderConfigBlock;
     groq?: ProviderConfigBlock;
@@ -103,6 +107,7 @@ export interface SymbioteConfig {
   defaultProvider: string;
   defaultModel: string;
   fallbackProviders?: string[];
+  sarsiProviders?: string[];
   /** Live-updating "what am I doing" tool-progress message in chat channels. Default: true */
   toolProgress?: boolean;
   maxTokens: number;
@@ -213,6 +218,13 @@ function resolveEnvKeys(config: SymbioteConfig): SymbioteConfig {
   injectKey('xai', 'XAI_API_KEY');
   injectKey('nvidia', 'NVIDIA_API_KEY');
   injectKey('openrouter', 'OPENROUTER_API_KEY');
+  injectKey('cloudflare', 'CLOUDFLARE_API_TOKEN');
+  if (!config.providers.cloudflare?.accountId && process.env.CLOUDFLARE_ACCOUNT_ID) {
+    config.providers.cloudflare = {
+      ...(config.providers.cloudflare ?? {}),
+      accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+    };
+  }
 
   if (!config.discord?.token && process.env.DISCORD_BOT_TOKEN) {
     config.discord = { ...(config.discord ?? {}), token: process.env.DISCORD_BOT_TOKEN };

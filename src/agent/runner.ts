@@ -18,6 +18,7 @@ import { getSarsiModel } from '../sarsi/index.js';
 import { EXPANDED_CAP as PULSE_EXPANDED_CAP, EXPAND_THRESHOLD as PULSE_EXPAND_THRESHOLD } from './pulse.js';
 
 export const DEFAULT_MAX_CONTEXT_TOKENS = 100_000;
+const TOOL_DEFINITION_CONTEXT_RESERVE = 8_192;
 
 export function omitEphemeralImages(messages: Message[]): Message[] {
   return messages.map(message => {
@@ -275,7 +276,14 @@ export async function runAgent(
   const pulseMaxIter = Math.min(PULSE_EXPANDED_CAP, turnIterationBudget);
   let maxIter = initialMaxIter;
   const pulseExpandAt = Math.min(PULSE_EXPAND_THRESHOLD, Math.max(1, Math.ceil(initialMaxIter * 0.8)));
-  const maxCtx = config.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
+  const configuredContextWindow = config.providerConfig.contextWindow;
+  const outputTokenBudget = config.providerConfig.maxTokens ?? 8_192;
+  const providerInputBudget = typeof configuredContextWindow === 'number'
+    && Number.isSafeInteger(configuredContextWindow)
+    && configuredContextWindow > 0
+    ? Math.max(1, configuredContextWindow - outputTokenBudget - TOOL_DEFINITION_CONTEXT_RESERVE)
+    : DEFAULT_MAX_CONTEXT_TOKENS;
+  const maxCtx = Math.min(config.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS, providerInputBudget);
   const allToolCalls: RunResult['toolCalls'] = [];
   const temperatureHistory: Array<{ iteration: number; category: TaskCategory; temperature: number }> = [];
   let recentToolNames: string[] = [];

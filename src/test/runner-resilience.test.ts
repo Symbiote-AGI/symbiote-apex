@@ -40,6 +40,28 @@ test('runner retries a stream that drops mid-response', async () => {
   assert.equal(result.text, 'recovered');
 });
 
+test('runner reserves output and tool-definition budget within a configured model context window', async () => {
+  const seen: any[][] = [];
+  const provider = fakeProvider([async function* () {
+    yield { type: 'text_delta', text: 'ready' };
+    yield { type: 'done', stopReason: 'end_turn' };
+  }], seen);
+  const messages = Array.from({ length: 10 }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `message-${index} ${'x'.repeat(16_000)}`,
+  }));
+  const result = await runAgent(messages as any, {
+    ...base,
+    provider,
+    providerConfig: { model: 'limited-context', maxTokens: 4096, contextWindow: 32_768 } as any,
+    toolRegistry: registry(async () => 'ok'),
+  });
+
+  assert.equal(result.text, 'ready');
+  assert.ok(seen[0].length < messages.length);
+  assert.equal(seen[0].at(-1).content.includes('message-9'), true);
+});
+
 test('runner clamps PULSE expansion to the remaining per-turn budget', async () => {
   const originalCwd = process.cwd();
   const workspace = mkdtempSync(join(tmpdir(), 'symbiote-turn-budget-'));

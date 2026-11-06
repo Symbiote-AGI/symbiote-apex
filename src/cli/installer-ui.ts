@@ -70,6 +70,7 @@ function toSetupInput(payload: Record<string, unknown>, configDirectory: string)
     provider: String(payload.provider ?? defaults.provider),
     model: String(payload.model ?? defaults.model),
     providerApiKey: String(payload.providerApiKey ?? defaults.providerApiKey ?? ''),
+    providerAccountId: String(payload.providerAccountId ?? defaults.providerAccountId ?? ''),
     workspace: path.resolve(String(payload.workspace ?? defaults.workspace)),
     sessionsDir: String(payload.sessionsDir ?? defaults.sessionsDir),
     temperature: num(payload.temperature, defaults.temperature),
