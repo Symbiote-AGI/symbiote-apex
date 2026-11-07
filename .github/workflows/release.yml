@@ -107,13 +107,13 @@ jobs:
             package-lock.json
             webapp/package-lock.json
           registry-url: https://npm.pkg.github.com
-          scope: '@artifact-opensource'
+          scope: '@symbiote-agi'
       - run: npm ci
       - run: npm --prefix webapp ci
       - run: npm run build
       - name: Publish package to GitHub Packages
         run: |
-          npm pkg set name=@artifact-opensource/symbiote
+          npm pkg set repository.url=git+https://github.com/Symbiote-AGI/symbiote-apex.git
           npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
