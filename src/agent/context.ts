@@ -2,19 +2,26 @@
 
 import type { Message, ContentBlock } from '../providers/types.js';
 
-/** Rough token estimate: ~4 chars per token */
+/** Conservative token estimate for mixed prose, code, and structured content. */
 function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  return Math.ceil(text.length / 3);
 }
 
 function messageSize(msg: Message): number {
-  if (typeof msg.content === 'string') return estimateTokens(msg.content);
-  return msg.content.reduce((sum, b) => {
-    if (b.text) return sum + estimateTokens(b.text);
-    if (b.content) return sum + estimateTokens(b.content);
-    if (b.input) return sum + estimateTokens(JSON.stringify(b.input));
-    return sum + 50; // base cost for structured blocks
-  }, 0);
+  const contentSize = typeof msg.content === 'string'
+    ? estimateTokens(msg.content)
+    : msg.content.reduce((sum, block) => {
+      if (block.type === 'image') return sum + 2_048;
+      if (block.text) return sum + estimateTokens(block.text);
+      if (block.content) return sum + estimateTokens(block.content);
+      if (block.input) return sum + estimateTokens(JSON.stringify(block.input));
+      return sum + 50;
+    }, 0);
+  const toolCallsSize = msg.tool_calls?.reduce(
+    (sum, call) => sum + estimateTokens(JSON.stringify(call)),
+    0,
+  ) ?? 0;
+  return contentSize + toolCallsSize;
 }
 
 // ── Tool pair detection (handles BOTH internal OpenAI-style and Anthropic-native formats) ──
@@ -101,7 +108,7 @@ export function truncateContext(messages: Message[], maxTokens: number): Message
 
   for (let i = rest.length - 1; i >= 0; i--) {
     const size = messageSize(rest[i]);
-    if (budget - size < 0 && keepFlags.filter(Boolean).length > 2) break;
+    if (budget - size < 0) break;
     budget -= size;
     keepFlags[i] = true;
   }

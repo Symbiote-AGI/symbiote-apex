@@ -8,12 +8,13 @@ import { fetchWithRetry } from '../providers/retry.js';
 
 type Script = Array<() => AsyncGenerator<any>>;
 
-function fakeProvider(script: Script, seen: any[][] = []): any {
+function fakeProvider(script: Script, seen: any[][] = [], seenTools?: any[][]): any {
   let call = 0;
   return {
     name: 'fake',
-    stream(messages: any[]) {
+    stream(messages: any[], tools: any[]) {
       seen.push(JSON.parse(JSON.stringify(messages)));
+      seenTools?.push(JSON.parse(JSON.stringify(tools)));
       const step = script[Math.min(call++, script.length - 1)];
       return step();
     },
@@ -40,26 +41,46 @@ test('runner retries a stream that drops mid-response', async () => {
   assert.equal(result.text, 'recovered');
 });
 
-test('runner reserves output and tool-definition budget within a configured model context window', async () => {
+test('runner reserves output and actual tool-schema size within a configured model context window', async () => {
   const seen: any[][] = [];
+  const seenTools: any[][] = [];
   const provider = fakeProvider([async function* () {
     yield { type: 'text_delta', text: 'ready' };
     yield { type: 'done', stopReason: 'end_turn' };
-  }], seen);
+  }], seen, seenTools);
+  const toolSchema = Array.from({ length: 20 }, (_, index) => ({
+    name: index === 0 ? 'read_file' : `tool_${index}`,
+    description: index === 0 ? 'Read a file from the workspace.' : 'An unrelated tool with a detailed schema. '.repeat(100),
+    parameters: { type: 'object', properties: { query: { type: 'string', description: 'Query field. '.repeat(50) } } },
+  }));
+  const toolRegistry = {
+    ...registry(async () => 'ok'),
+    toProviderFormat: () => toolSchema,
+  };
   const messages = Array.from({ length: 10 }, (_, index) => ({
-    role: index % 2 === 0 ? 'user' : 'assistant',
-    content: `message-${index} ${'x'.repeat(16_000)}`,
+    role: index % 2 === 0 || index === 9 ? 'user' : 'assistant',
+    content: index === 9
+      ? `Please read message-9 and summarize the workspace. ${'x'.repeat(16_000)}`
+      : `message-${index} ${'x'.repeat(16_000)}`,
   }));
   const result = await runAgent(messages as any, {
     ...base,
     provider,
     providerConfig: { model: 'limited-context', maxTokens: 4096, contextWindow: 32_768 } as any,
-    toolRegistry: registry(async () => 'ok'),
+    toolRegistry,
   });
 
   assert.equal(result.text, 'ready');
   assert.ok(seen[0].length < messages.length);
   assert.equal(seen[0].at(-1).content.includes('message-9'), true);
+  assert.ok(seenTools[0].length < toolSchema.length);
+  assert.ok(seenTools[0].some(tool => tool.name === 'read_file'));
+  const estimatedMessageTokens = seen[0].reduce(
+    (total, message) => total + Math.ceil(message.content.length / 3),
+    0,
+  );
+  const estimatedToolTokens = Math.ceil(JSON.stringify(seenTools[0]).length / 2);
+  assert.ok(estimatedMessageTokens + estimatedToolTokens + 4096 + 2048 <= 32_768);
 });
 
 test('runner clamps PULSE expansion to the remaining per-turn budget', async () => {

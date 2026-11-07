@@ -30,7 +30,7 @@ test('upgrade fills every stub, relativizes paths and removes legacy keys', () =
   assert.ok(!('mach6' in config) && !('notes' in config));
   assert.deepEqual(config.allowedOrigins, ['http://localhost:3009']);
   for (const key of ['heartbeat', 'timeouts', 'tools', 'whatsapp', 'orchestrator', 'adaptiveTemperature', 'memory']) assert.ok(key in config, key);
-  assert.equal(config.memory.neural.model, 'bge-m3');
+  assert.equal(config.memory.neural.model, buildConfigTemplate({}).memory.neural.model);
   assert.equal(config.memory.neural.enabled, false);
   assert.ok(changes.length > 0);
 });

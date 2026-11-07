@@ -18,7 +18,8 @@ import { getSarsiModel } from '../sarsi/index.js';
 import { EXPANDED_CAP as PULSE_EXPANDED_CAP, EXPAND_THRESHOLD as PULSE_EXPAND_THRESHOLD } from './pulse.js';
 
 export const DEFAULT_MAX_CONTEXT_TOKENS = 100_000;
-const TOOL_DEFINITION_CONTEXT_RESERVE = 8_192;
+const CONTEXT_SAFETY_RESERVE = 2_048;
+const TOOL_SCHEMA_CHARS_PER_TOKEN = 2;
 
 export function omitEphemeralImages(messages: Message[]): Message[] {
   return messages.map(message => {
@@ -80,6 +81,7 @@ const MAX_STREAM_RETRIES = 3;
 const MAX_EMPTY_NUDGES = 2;
 const MAX_RESULT_SIZE = 50 * 1024;
 const REPEAT_CALL_THRESHOLD = 3;
+const DEFAULT_TOOL_NAMES = new Set(['read', 'write', 'edit', 'exec', 'fs', 'web_fetch']);
 const stableToolInput = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(stableToolInput);
   if (value && typeof value === 'object') {
@@ -109,6 +111,40 @@ export const resolveToolTimeoutMs = (toolName: string, input: Record<string, unk
 };
 const streamIdleMs = (requestTimeoutMs?: number): number =>
   envMs('SYMBIOTE_STREAM_IDLE_MS', requestTimeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS);
+
+function estimateToolSchemaTokens(tools: ToolDef[]): number {
+  return Math.ceil(JSON.stringify(tools).length / TOOL_SCHEMA_CHARS_PER_TOKEN);
+}
+
+function selectToolsForContext(tools: ToolDef[], prompt: string, tokenBudget: number): ToolDef[] {
+  if (estimateToolSchemaTokens(tools) <= tokenBudget) return tools;
+
+  const promptTerms = new Set((prompt.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    .filter(term => !/^\d+$/.test(term)));
+  const ranked = tools.map((tool, index) => {
+    const nameTerms = new Set(tool.name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+    const detailTerms = new Set(`${tool.description} ${JSON.stringify(tool.parameters)}`
+      .toLowerCase()
+      .match(/[a-z0-9]+/g) ?? []);
+    let score = DEFAULT_TOOL_NAMES.has(tool.name) ? 2 : 0;
+    for (const term of promptTerms) {
+      if (nameTerms.has(term)) score += 5;
+      else if (detailTerms.has(term)) score++;
+    }
+    return { tool, index, score, tokens: estimateToolSchemaTokens([tool]) };
+  }).sort((left, right) =>
+    right.score - left.score || left.tokens - right.tokens || left.index - right.index,
+  );
+
+  const selected: ToolDef[] = [];
+  let remaining = tokenBudget;
+  for (const candidate of ranked) {
+    if (candidate.score === 0 || candidate.tokens > remaining) continue;
+    selected.push(candidate.tool);
+    remaining -= candidate.tokens;
+  }
+  return selected;
+}
 
 function isTransientStreamError(err: unknown): boolean {
   const e = err as { name?: string; message?: string; code?: string; cause?: { code?: string } } | undefined;
@@ -278,12 +314,6 @@ export async function runAgent(
   const pulseExpandAt = Math.min(PULSE_EXPAND_THRESHOLD, Math.max(1, Math.ceil(initialMaxIter * 0.8)));
   const configuredContextWindow = config.providerConfig.contextWindow;
   const outputTokenBudget = config.providerConfig.maxTokens ?? 8_192;
-  const providerInputBudget = typeof configuredContextWindow === 'number'
-    && Number.isSafeInteger(configuredContextWindow)
-    && configuredContextWindow > 0
-    ? Math.max(1, configuredContextWindow - outputTokenBudget - TOOL_DEFINITION_CONTEXT_RESERVE)
-    : DEFAULT_MAX_CONTEXT_TOKENS;
-  const maxCtx = Math.min(config.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS, providerInputBudget);
   const allToolCalls: RunResult['toolCalls'] = [];
   const temperatureHistory: Array<{ iteration: number; category: TaskCategory; temperature: number }> = [];
   let recentToolNames: string[] = [];
@@ -427,6 +457,37 @@ export async function runAgent(
       : null;
     if (retrievedMemory) requestMessages.push(retrievedMemory);
 
+    // Tool schemas count against the provider context window just like prompts and messages.
+    const availableContext = typeof configuredContextWindow === 'number'
+      && Number.isSafeInteger(configuredContextWindow)
+      && configuredContextWindow > 0
+      ? configuredContextWindow - outputTokenBudget - CONTEXT_SAFETY_RESERVE
+      : undefined;
+    const allTools = config.toolRegistry.toProviderFormat();
+    const toolTokenBudget = availableContext === undefined
+      ? undefined
+      : Math.floor(availableContext * 0.4);
+    const tools = toolTokenBudget === undefined
+      ? allTools
+      : selectToolsForContext(allTools, requestMessages.filter(message => message.role === 'user')
+        .map(message => typeof message.content === 'string' ? message.content : message.content.map(block => block.text ?? '').join(' '))
+        .at(-1) ?? '', toolTokenBudget);
+    if (tools.length < allTools.length) {
+      console.warn(`[runner] Limited provider tools from ${allTools.length} to ${tools.length} to fit the configured context window.`);
+    }
+    const toolSchemaTokens = estimateToolSchemaTokens(tools);
+    const providerInputBudget = typeof configuredContextWindow === 'number'
+      && Number.isSafeInteger(configuredContextWindow)
+      && configuredContextWindow > 0
+      ? configuredContextWindow - outputTokenBudget - toolSchemaTokens - CONTEXT_SAFETY_RESERVE
+      : DEFAULT_MAX_CONTEXT_TOKENS;
+    if (providerInputBudget <= 0) {
+      throw new RangeError(
+        `Provider context window (${configuredContextWindow}) cannot fit the configured output budget (${outputTokenBudget}), selected tool schemas (estimated ${toolSchemaTokens} tokens), and safety reserve (${CONTEXT_SAFETY_RESERVE} tokens).`,
+      );
+    }
+    const maxCtx = Math.min(config.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS, providerInputBudget);
+
     // Truncate context if needed and preserve discarded conversation text in the VDB.
     const truncated = truncateContext(requestMessages, maxCtx);
     if (config.contextStore) {
@@ -450,7 +511,6 @@ export async function runAgent(
     }
 
     // Stream from LLM
-    const tools = config.toolRegistry.toProviderFormat();
     if (config.onProgress) {
       config.onProgress({ type: 'iteration', iteration: iterations, maxIterations: maxIter, messageCount: truncated.length });
     } else {
