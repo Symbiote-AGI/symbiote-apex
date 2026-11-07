@@ -9,7 +9,7 @@ FreeAI provides free-tier access to multiple LLM models through a single API end
   "providers": {
     "freeai": {
       "apiKey": "${FREEAI_API_KEY}",
-      "baseUrl": "https://api.freetheai.org/v1"
+      "baseUrl": "https://api.freetheai.xyz/v1"
     }
   }
 }

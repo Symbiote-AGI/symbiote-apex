@@ -8,7 +8,7 @@
 
 [![Version](https://img.shields.io/badge/version-5.7.0-blue?style=flat-square)](https://github.com/artifact-opensource/symbiote/releases)
 [![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-4.9.5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9.3-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![MIT License](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)](LICENSE) <br>
 
 
@@ -28,7 +28,7 @@ Symbiote is more than a chat interface around an LLM. It is a local-first agent 
 | **Memory with provenance and boundaries** | Embedded lexical retrieval, durable sessions, COMB continuity, and optional Memograph imports work together. A separate bounded Ops Memory records only coarse metadata about completed tool calls; it expires observations and labels them as historical evidence, never live status. |
 | **A tool-using runtime** | Built-in file, filesystem, shell, process, browser, web, hardware, memory, messaging, and sub-agent tools let the agent inspect and act in its configured environment. Tool execution is sequential within an iteration, results are checked, and failures are returned to the agent to guide a different approach. |
 | **Adaptive and self-evaluating behavior** | SARSI, PARC, Curator, MEA, and Meta^n support routing, outcome assessment, and controlled evaluation of proposed improvements without inserting extra model calls into the tool-execution loop. |
-| **Channels and interfaces** | Run interactively in the CLI or keep the gateway online for Discord, WhatsApp, and the local HTTP/web interface. Channel-specific formatting, queued input, steering, and interrupt handling keep the interaction usable during long tasks. |
+| **Channels and interfaces** | Run interactively in the CLI or keep the gateway online for Discord, WhatsApp, and the local HTTP/web interface. The optional Electron desktop shell connects to that same Gateway and Control Room. Channel-specific formatting, queued input, steering, and interrupt handling keep the interaction usable during long tasks. |
 | **Application connectors** | A common connector engine supports REST and MCP adapters, encrypted credentials, explicit per-agent capability grants, connection health, and bounded execution history. Built-in connectors cover GitHub, Notion, Slack, Figma, and Canva. |
 | **Markets workspace** | Public market feeds, persistent chart drawings and indicators, agent-accessible chart tools, a dedicated chat, and an optional MetaTrader 5 bridge. |
 | **Independent recovery surface** | The gateway also serves a standalone, dependency-free native UI at `/native` and supervises its HTTP server with bounded exponential restart retries. |
@@ -78,7 +78,8 @@ Provider APIs and optional channel services require their own credentials and ne
 ```bash
 git clone https://github.com/artifact-opensource/symbiote.git
 cd symbiote
-npm install
+npm ci
+npm --prefix webapp ci
 npm run build
 ```
 
@@ -125,7 +126,9 @@ A minimal `symbiote.json`:
 
 The default LLM request timeout is 15 minutes. `timeouts.llmRequestMs` and provider-specific `timeoutMs` values can override it. Provider retries preserve the configured timeout; authentication failures fail fast.
 
-The CLI and gateway register OpenRouter, Anthropic, OpenAI, Groq, Gemini, NVIDIA, xAI, GitHub Copilot, Ollama, Artifact Engine, Gladius, and FreeAI. A routed provider is used only when it is registered and configured; otherwise Symbiote uses the configured default provider. Supported providers can expose models through automatic discovery.
+The CLI and gateway register OpenRouter, Anthropic, OpenAI, Groq, Gemini, NVIDIA, xAI, GitHub Copilot, Ollama, Artifact Engine, Gladius, FreeAI, and Cloudflare Workers AI. A routed provider is used only when it is registered and configured; otherwise Symbiote uses the configured default provider. Supported providers can expose models through automatic discovery, including account-scoped Cloudflare model discovery.
+
+Providers can set `contextWindow` and `maxTokens` independently. When a context window is configured, the runner trims older conversation history to leave room for the requested output and tool definitions. Set these values to the limits supported by the selected model and account; see the [Cloudflare setup guide](docs/providers/cloudflare.md) for a concrete example.
 
 ## Memory
 
@@ -143,7 +146,7 @@ Ops Memory is a separate, bounded store under `<workspace>/.symbiote/ops-memory.
 
 Memograph snapshots can be imported into the VDB from `MEMOGRAPH_STORAGE_DIR`. By default, Symbiote looks for a sibling `memograph/.memograph_storage` directory. Each shard is imported as its own document with graph, domain, scope, permission, version, content type, parent, and relation metadata preserved. LIVE, PROJECT, and ENTERPRISE memories use separate namespaces.
 
-See [Memograph Integration](docs/core/memograph.md) for storage discovery, permission filtering, diagnostics, and retrieval limits.
+See [Memograph Integration](docs/core-conepts/memograph.md) for storage discovery, permission filtering, diagnostics, and retrieval limits.
 
 Context retrieval filters Memograph shards by the `agent` or wildcard permission, applies domain authority and scope affinity, and can expand a bounded number of related shards. Import errors identify the snapshot or shard and do not stop healthy records from loading. Symbiote reads Memograph snapshots; it does not require the Python package at runtime.
 
@@ -191,7 +194,7 @@ npm run check:release
 ```
 
 The project includes focused tests for provider routing, continuation behavior, VDB-backed Memograph import, tool execution and result handling, operational-memory expiry and retrieval, Discord progress formatting, and session persistence. Provider and channel integrations should also be exercised with their configured test credentials before deployment.
-Pull requests and branch pushes run [CI](.github/workflows/ci.yml) and [CodeQL](.github/workflows/codeql.yml). Dependabot proposes weekly dependency and workflow updates; repository issue labels are maintained in [`.github/labels.json`](.github/labels.json) and can be synchronized with the [label workflow](.github/workflows/sync-labels.yml).
+Pull requests and branch pushes run [CI](.github/workflows/ci.yml). Dependabot proposes weekly dependency and workflow updates; repository issue labels are maintained in [`.github/labels.json`](.github/labels.json) and can be synchronized with the [label workflow](.github/workflows/sync-labels.yml).
 
 ## Contributing and community
 
@@ -208,5 +211,4 @@ Additional guides live in [`docs/`](docs/README.md). Start with [Quick Start](do
 ---
 
 [![CI](https://github.com/artifact-opensource/symbiote/actions/workflows/ci.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/ci.yml) <br>
-[![CodeQL](https://github.com/artifact-opensource/symbiote/actions/workflows/codeql.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/codeql.yml) <br>
 [![Build and release assets](https://github.com/artifact-opensource/symbiote/actions/workflows/release.yml/badge.svg)](https://github.com/artifact-opensource/symbiote/actions/workflows/release.yml)

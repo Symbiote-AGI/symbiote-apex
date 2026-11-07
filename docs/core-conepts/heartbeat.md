@@ -13,4 +13,4 @@ Task attempts are persisted in `.agents/heartbeat/state.json` and are not replay
 
 Heartbeat intervals adapt to user activity (30 minutes active, 2 hours idle, 6 hours sleeping by default) and respect local quiet hours (23:00–08:00 by default). Scheduling and paths use Node.js runtime abstractions and the configured workspace; execution remains limited by host capabilities and configured sandbox policy.
 
-See the full [Heartbeat safety and retry policy](../../core/heartbeat.md).
+See the full [Heartbeat safety and retry policy](heartbeat.md).

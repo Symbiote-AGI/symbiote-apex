@@ -15,12 +15,14 @@ Symbiote's CLI and gateway registries expose LLM providers through a unified str
 | [GitHub Copilot](github-copilot.md) | `github-copilot` | `gh auth` | No | Varies |
 | [Ollama](ollama.md) | `ollama` | Local service | Optional | Varies |
 | [Gladius](gladius.md) | `gladius` | Local HTTP endpoint | Optional | Local |
-| NVIDIA | `nvidia` | `NVIDIA_API_KEY` | No | Varies |
+| [Artifact Engine](artifact-engine.md) | `artifact-engine` | Local HTTP endpoint | No | Local |
+| [NVIDIA](nvidia.md) | `nvidia` | `NVIDIA_API_KEY` | No | Varies |
 | [Cloudflare Workers AI](cloudflare.md) | `cloudflare` | Account ID + `CLOUDFLARE_API_TOKEN` | No | Varies |
+| [FreeAI](freeai.md) | `freeai` | `FREEAI_API_KEY` | No | Varies |
 
-Provider modules for Qwen, AI Horde, FreeAI, and OmniRoute exist in source but are not currently registered for CLI/gateway selection.
+These are the providers registered for CLI and Gateway selection. Documentation for Qwen, AI Horde, and OmniRoute describes adapters that are not currently registered for selection.
 
-> **Default provider:** OpenRouter (`openrouter/free`). Set `OPENROUTER_API_KEY` in `.env` or configure `providers.openrouter.apiKey`.
+> **Fresh-configuration default:** OpenRouter (`openrouter/free`). Set `OPENROUTER_API_KEY` in `.env` or configure `providers.openrouter.apiKey`; an existing `symbiote.json` can select any other configured default.
 
 ## Configuration
 
@@ -38,6 +40,8 @@ Register providers in `symbiote.json`:
       "accountId": "${CLOUDFLARE_ACCOUNT_ID}",
       "apiKey": "${CLOUDFLARE_API_TOKEN}",
       "model": "@cf/zai-org/glm-4.7-flash",
+      "maxTokens": 4096,
+      "contextWindow": 131072,
       "models": [
         "@cf/zai-org/glm-4.7-flash",
         "@cf/zai-org/glm-5.3-flash",
@@ -85,11 +89,11 @@ interface Provider {
 }
 ```
 
-Groq, xAI, Ollama, and Cloudflare Workers AI use the OpenAI-compatible adapter — they share the streaming protocol with provider-specific base URLs and authentication.
+Groq, xAI, Ollama, Cloudflare Workers AI, and Artifact Engine use the OpenAI-compatible adapter — they share the streaming protocol with provider-specific base URLs and authentication. Artifact Engine is a local service and does not need a third-party API key.
 
 ## Retry Logic
 
-All OpenAI-compatible providers (Groq, xAI, Ollama, OpenAI) include automatic retry:
+OpenAI-compatible providers use bounded automatic retries for transient request failures:
 
 - **Rate limits (429)** — observes `Retry-After`, with bounded backoff for temporary limits
 - **Daily quota** — fails fast because retrying before quota reset cannot help
@@ -98,4 +102,4 @@ All OpenAI-compatible providers (Groq, xAI, Ollama, OpenAI) include automatic re
 
 ## Diagnostics
 
-Symbiote validates provider configuration at boot. Missing API keys, unreachable endpoints, and invalid configurations are caught during the [boot sequence](../core/boot-sequence.md) — not at runtime. Failed providers log warnings but don't prevent startup if they aren't the default.
+Symbiote validates provider configuration at boot. Missing API keys, unreachable endpoints, and invalid configurations are reported during the [boot sequence](../core-conepts/boot-sequence.md). Failed optional providers do not prevent startup.

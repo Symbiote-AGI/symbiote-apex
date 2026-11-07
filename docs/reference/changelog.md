@@ -2,6 +2,10 @@
 
 The maintained, full release history and upgrade notes are in the repository [CHANGELOG.md](../../CHANGELOG.md).
 
+## Unreleased
+
+Changes made after v5.7.0 are tracked in the root changelog until the next version is released. They include Cloudflare Workers AI and Artifact Engine provider support, provider/model discovery and hot-swapping improvements, more reliable Gateway/Electron startup, and model-aware context budgeting.
+
 ## v5.7.0 — Connectors, Markets, and Neural Memory (2026-11-02)
 
 See the [v5.7.0 release notes](../releases/RELEASE_NOTES_v5.7.0.md) for the full feature list and upgrade guidance. This release adds the connector engine, agent-enabled Markets workspace, optional local neural memory, public resource aggregation, provider discovery, and a gateway-supervised recovery UI.

@@ -11,16 +11,26 @@
 
 ## Core Concepts
 
-* [Architecture](core/architecture.md)
-* [Message Bus](core/message-bus.md)
-* [Agent Runner](core/agent-runner.md)
-* [Sessions](core/sessions.md)
-* [Blink — Seamless Continuation](core/blink.md)
-* [Pulse — Adaptive Budget](core/pulse.md)
-* [COMB — Memory Persistence](core/comb.md)
-* [Memograph Integration](core/memograph.md)
-* [Heartbeat Scheduling](core/heartbeat.md)
-* [Boot Sequence](core/boot-sequence.md)
+* [Architecture](core-conepts/architecture.md)
+* [Agent Runner](core-conepts/agent-runner.md)
+* [Blink — Seamless Continuation](core-conepts/blink.md)
+* [Circuit Breaker](core-conepts/circuit-breaker.md)
+* [COMB — Memory Persistence](core-conepts/comb.md)
+* [Context Monitor](core-conepts/context-monitor.md)
+* [Curator](core-conepts/curator.md)
+* [Boot Sequence](core-conepts/boot-sequence.md)
+* [Heartbeat Scheduling](core-conepts/heartbeat.md)
+* [Hot Resume](core-conepts/hot-resume.md)
+* [Agent Loop](core-conepts/loop.md)
+* [Message Bus](core-conepts/message-bus.md)
+* [Metrics](core-conepts/metrics.md)
+* [Memograph Integration](core-conepts/memograph.md)
+* [Pulse — Adaptive Budget](core-conepts/pulse.md)
+* [Sessions](core-conepts/sessions.md)
+* [Skills Ingestion](core-conepts/skills-ingest.md)
+* [Neural Memory and VDB](core-conepts/vdb.md)
+* [Voice](core-conepts/voice.md)
+* [Compiler](core-conepts/compiler.md)
 
 ## Channels
 
@@ -32,6 +42,7 @@
 ## Providers
 
 * [Overview](providers/overview.md)
+* [Artifact Engine](providers/artifact-engine.md)
 * [Groq](providers/groq.md)
 * [Anthropic](providers/anthropic.md)
 * [OpenAI](providers/openai.md)
@@ -65,12 +76,27 @@
 
 ## Integrations
 
-* [Cloud and Automation Integrations](cloud-integrations.md)
-* [Self-hosting n8n for Symbiote](n8n-self-hosting.md)
-* [Google Workspace](google-workspace.md)
+* [Cloud and Automation Integrations](advanced/cloud-integrations.md)
+* [Self-hosting n8n for Symbiote](advanced/n8n-self-hosting.md)
+* [Google Workspace](advanced/google-workspace.md)
 
 ## Reference
 
 * [CLI Commands](reference/cli.md)
 * [Environment Variables](reference/environment.md)
 * [Changelog](reference/changelog.md)
+
+## Releases
+
+* [Latest release notes: v5.7.0](releases/RELEASE_NOTES_v5.7.0.md)
+* [v5.6.2 release notes](releases/RELEASE_NOTES_v5.6.2.md)
+* [v5.6.1 release notes](releases/RELEASE_NOTES_v5.6.1.md)
+* [Release history](../RELEASES.md)
+
+## Research
+
+* [Type Theory](research/type-theory.md)
+* [Hybrid Type Theory](research/hybrid-type-theory.md)
+* [Derivation](research/derivation.md)
+* [Thesis](thesis/thesis.md)
+* [Manifesto](thesis/manifesto.md)

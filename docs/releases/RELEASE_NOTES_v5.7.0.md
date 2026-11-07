@@ -25,7 +25,7 @@ Symbiote 5.7.0 adds a first-class connector platform, agent-enabled Markets and 
 ## Additional improvements
 
 - Refined the API registry, integrations, browser, IDE, maps, health, and Markets interfaces for more consistent layout and theme behavior.
-- Added CI, CodeQL, release publishing, dependency-update, and repository-label automation.
+- Added CI, release publishing, dependency-update, and repository-label automation.
 - Added desktop and mobile screenshots for the webapp, native recovery UI, and CLI.
 - Updated release packaging to publish version-matched assets and SPDX software bills of materials.
 

@@ -23,7 +23,7 @@ Output:
 node dist/gateway/daemon.js --config=symbiote.json
 ```
 
-You'll see the [boot sequence](../core/boot-sequence.md):
+You'll see the [boot sequence](../core-conepts/boot-sequence.md):
 
 ```
 ◇ BOOT SEQUENCE

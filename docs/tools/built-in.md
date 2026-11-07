@@ -135,7 +135,7 @@ In gateway sessions, desktop control is visible and executable only for admin se
 ## Memory Compatibility Alias
 | `memory_stats` | Show persistent memory database statistics |
 Uses the embedded VDB and the same hybrid BM25 + sparse TF-IDF retrieval as `memory_recall`.
-VDB is the embedded persistent memory engine. See [VDB documentation](../core/vdb.md) for details.
+VDB is the embedded persistent memory engine. See [VDB documentation](../core-conepts/vdb.md) for details.
 
 ### memory_recall
 
@@ -183,7 +183,7 @@ Uses the same embedded VDB as `memory_recall`; no external memory daemon or embe
 | `comb_stage` | Stage a concise memory for future sessions |
 | `memory_offload` | Persist a distilled memory to JSONL, Memograph, and VDB |
 
-COMB uses VDB for warm searchable continuity. Explicit distilled offloads are also written to the append-only JSONL archive and Memograph topology. See [COMB documentation](../core/comb.md) for details.
+COMB uses VDB for warm searchable continuity. Explicit distilled offloads are also written to the append-only JSONL archive and Memograph topology. See [COMB documentation](../core-conepts/comb.md) for details.
 
 ### comb_recall
 

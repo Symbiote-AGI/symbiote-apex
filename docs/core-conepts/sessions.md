@@ -65,4 +65,4 @@ Each sub-agent gets its own session with:
 
 ## Hot Resume
 
-Sessions survive gateway restarts via the [Hot Resume](../../core/hot-resume.md) system. Active sessions are checkpointed to disk every 60 seconds and on clean exit, then restored automatically on boot.
+Sessions survive gateway restarts via the [Hot Resume](hot-resume.md) system. Active sessions are checkpointed to disk and restored automatically on boot.

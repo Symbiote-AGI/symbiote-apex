@@ -1,5 +1,7 @@
 # Symbiote Releases
 
+The latest published release is **v5.7.0**. Post-release work is listed under [Unreleased](CHANGELOG.md#unreleased) until it receives a versioned release.
+
 ## Latest: v5.7.0 Apex (November 2, 2026)
 Introduces the connector engine, agent-enabled Markets workspace, optional local neural memory, OpenSky-backed resource aggregation, provider discovery, and a gateway-supervised recovery UI. Details: [Release Notes](docs/releases/RELEASE_NOTES_v5.7.0.md).
 

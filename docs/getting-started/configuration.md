@@ -181,6 +181,8 @@ SYMBIOTE_WEB_TOKEN=
 | `webPort` | number | `3009` | React webapp port |
 | `xmcpPort` | number | `9999` | Standalone xMCP HTTP server port |
 
+Provider blocks may set `maxTokens` to cap generated output and `contextWindow` to declare the selected model's total context limit. When configured, the runner reserves room for output and tool definitions, then trims older conversation history to fit the remaining prompt budget. Set these values for the actual model and account limits; published catalog claims can differ from the effective API limit. See [Cloudflare Workers AI configuration](../providers/cloudflare.md#configuration).
+
 ## Web UI Configuration
 
 The Web UI runs on a separate port from the HTTP API:
@@ -211,7 +213,7 @@ Advanced VDB tuning is done at the code level:
 | Auto-ingest interval | 10 min | Minimum time between session auto-ingestion |
 | Storage format | JSONL | Append-only, crash-safe |
 
-See [VDB](../core/vdb.md) and [Memograph Integration](../core/memograph.md) for retrieval and topology details.
+See [VDB](../core-conepts/vdb.md) and [Memograph Integration](../core-conepts/memograph.md) for retrieval and topology details.
 
 ## Voice Configuration
 
@@ -219,7 +221,7 @@ The voice pipeline auto-detects voice messages and handles them transparently. N
 
 For enterprise deployments with sovereign voice (MeloTTS + OpenVoice), the voice scripts are configured via environment-specific paths in the voice middleware source.
 
-See [Voice Pipeline](../core/voice.md) for details.
+See [Voice Pipeline](../core-conepts/voice.md) for details.
 
 ## Provider Configuration
 
@@ -230,6 +232,9 @@ Each provider can be configured with:
 | `apiKey` | Override env var (not recommended — use `.env`) |
 | `accountId` | Cloudflare account ID; use `CLOUDFLARE_ACCOUNT_ID` in `.env` |
 | `baseUrl` | Custom endpoint URL |
+| `models` | Explicit model IDs permitted for SARSI routing |
+| `maxTokens` | Provider-specific maximum output tokens |
+| `contextWindow` | Total model context limit used to budget conversation history |
 
 See [Providers Overview](../providers/overview.md) for supported providers and their options.
 
@@ -276,4 +281,4 @@ kill -USR1 $(pgrep -f "gateway/daemon.js")
 
 ## Validation
 
-Symbiote validates configuration at [boot](../core/boot-sequence.md) with human-readable diagnostics. Missing required fields, invalid types, and unreachable providers are caught before the agent starts — not at runtime.
+Symbiote validates configuration at [boot](../core-conepts/boot-sequence.md) with human-readable diagnostics. Missing required fields, invalid types, and unreachable providers are reported before the agent starts.

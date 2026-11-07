@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Cloudflare Workers AI provider support, account-scoped model discovery, and documented SARSI model assignments.
+- Artifact Engine as a local OpenAI-compatible provider, including model discovery and neural-memory embedding support.
+- Discord provider/model selection and discovery for live provider hot-swapping.
+
+### Changed
+- Electron now starts and supervises the Gateway, detects stale build output, and coordinates clean restarts without launching competing Gateway processes.
+- Session summary caching and coalesced neural-memory backfills reduce repeated work during startup and session listing.
+- Provider-specific `contextWindow` and `maxTokens` settings now bound conversation history, reserving room for generated output and tool definitions.
+
+### Fixed
+- Cloudflare requests that exceed the configured context budget are reduced by trimming older conversation history before provider submission.
+- WebSocket handshake timeout handling and Discord interaction acknowledgement/reconnect paths are more resilient.
+- Gateway startup and restart handling avoid stale child processes and repeated initialization work.
+
 ## v5.7.0 (2026-11-02) — Apex
 
 Full release notes: [RELEASE_NOTES_v5.7.0.md](docs/releases/RELEASE_NOTES_v5.7.0.md)
@@ -13,7 +30,7 @@ Full release notes: [RELEASE_NOTES_v5.7.0.md](docs/releases/RELEASE_NOTES_v5.7.0
 - Optional local neural memory using Ollama embeddings and a persistent HNSW index alongside lexical VDB retrieval.
 - Profile-driven hands-free voice activation, draft dictation with a trailing “send” command, and optional offline Vosk speech recognition.
 - FreeAI provider registration and provider/model discovery for interactive provider switching.
-- A gateway-supervised native recovery UI, production CI/CodeQL/release workflows, repository label automation, and desktop/mobile screenshots.
+- A gateway-supervised native recovery UI, production CI/release workflows, repository label automation, and desktop/mobile screenshots.
 - Admin-only n8n workflow operations and safer local-first n8n integration controls.
 
 ### Changed
@@ -237,14 +254,14 @@ Full notes are superseded by the v5.3.0 summary above; this section preserves th
 - Auto-recovery: half-open probes after cooldown, full recovery after 2 consecutive successes
 - Health states: healthy -> degraded -> unhealthy -> circuit-open (automatic transitions)
 - Circuit-open providers skipped during fallback chain (no wasted retries)
-- See: [Circuit Breaker](docs/core/circuit-breaker.md)
+- See: [Circuit Breaker](docs/core-conepts/circuit-breaker.md)
 
 ### Session Hot Resume
 - Session state persisted to disk every 60s
 - On process termination: all active sessions marked and flushed to disk before exit
 - Startup restoration: previous session state reloaded on boot with 24h age validation
 - Gateway restarts no longer lose conversation context registration
-- See: [Sessions](docs/core/sessions.md)
+- See: [Sessions](docs/core-conepts/sessions.md)
 
 ### Metrics Collector
 - Provider metrics: call count, error count, token usage (in/out), latency histograms (p50/p90/p99)
@@ -252,7 +269,7 @@ Full notes are superseded by the v5.3.0 summary above; this section preserves th
 - Session metrics: turn count, active session tracking
 - Ring buffer design: bounded memory, automatic eviction of old samples
 - Auto-flush to JSON every 5 minutes; zero dependencies (pure Node.js stdlib)
-- See: [Metrics](docs/core/metrics.md)
+- See: [Metrics](docs/core-conepts/metrics.md)
 
 ### Configurable Idle Emoji
 - Idle status indicator emoji now configurable via `idleEmoji` field in `symbiote.json`
