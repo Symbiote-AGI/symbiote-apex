@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v5.7.1 (2026-11-07) — Stability and Gateway Reliability
+
+Full release notes: [RELEASE_NOTES_v5.7.1.md](docs/releases/RELEASE_NOTES_v5.7.1.md)
+
 ### Added
 - Cloudflare Workers AI provider support, account-scoped model discovery, and documented SARSI model assignments.
 - Artifact Engine as a local OpenAI-compatible provider, including model discovery and neural-memory embedding support.
@@ -10,10 +14,10 @@
 ### Changed
 - Electron now starts and supervises the Gateway, detects stale build output, and coordinates clean restarts without launching competing Gateway processes.
 - Session summary caching and coalesced neural-memory backfills reduce repeated work during startup and session listing.
-- Provider-specific `contextWindow` and `maxTokens` settings now bound conversation history, reserving room for generated output and tool definitions.
+- Provider-specific `contextWindow` and `maxTokens` settings now budget conversation history and tool schemas, reserving room for generated output and safety overhead.
 
 ### Fixed
-- Cloudflare requests that exceed the configured context budget are reduced by trimming older conversation history before provider submission.
+- Cloudflare context overflow is prevented by selecting relevant tool schemas and trimming conversation history to fit the model's configured context window.
 - WebSocket handshake timeout handling and Discord interaction acknowledgement/reconnect paths are more resilient.
 - Gateway startup and restart handling avoid stale child processes and repeated initialization work.
 

@@ -4,7 +4,11 @@ The maintained, full release history and upgrade notes are in the repository [CH
 
 ## Unreleased
 
-Changes made after v5.7.0 are tracked in the root changelog until the next version is released. They include Cloudflare Workers AI and Artifact Engine provider support, provider/model discovery and hot-swapping improvements, more reliable Gateway/Electron startup, and model-aware context budgeting.
+Changes made after v5.7.1 are tracked in the root changelog until the next version is released.
+
+## v5.7.1 — Stability and Gateway Reliability (2026-11-07)
+
+See the [v5.7.1 release notes](../releases/RELEASE_NOTES_v5.7.1.md) for the full feature list. This release adds Cloudflare Workers AI and Artifact Engine provider support, provider/model discovery and hot-swapping improvements, more reliable Gateway/Electron startup, and model-aware context budgeting including tool schemas.
 
 ## v5.7.0 — Connectors, Markets, and Neural Memory (2026-11-02)
 

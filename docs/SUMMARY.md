@@ -88,7 +88,8 @@
 
 ## Releases
 
-* [Latest release notes: v5.7.0](releases/RELEASE_NOTES_v5.7.0.md)
+* [Latest release notes: v5.7.1](releases/RELEASE_NOTES_v5.7.1.md)
+* [v5.7.0 release notes](releases/RELEASE_NOTES_v5.7.0.md)
 * [v5.6.2 release notes](releases/RELEASE_NOTES_v5.6.2.md)
 * [v5.6.1 release notes](releases/RELEASE_NOTES_v5.6.1.md)
 * [Release history](../RELEASES.md)

@@ -3,7 +3,7 @@
 # Documentation Index
 
 > Persistent AI agent runtime <br>
-> **v5.7.0**
+> **v5.7.1**
 
 [Quick Start](getting-started/quick-start.md) · [Configuration](getting-started/configuration.md) · [Providers](providers/overview.md) · [CLI](reference/cli.md) · [Tools](tools/built-in.md)
 

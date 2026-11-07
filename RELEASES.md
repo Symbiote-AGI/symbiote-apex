@@ -1,8 +1,11 @@
 # Symbiote Releases
 
-The latest published release is **v5.7.0**. Post-release work is listed under [Unreleased](CHANGELOG.md#unreleased) until it receives a versioned release.
+The latest release is **v5.7.1**. Post-release work is listed under [Unreleased](CHANGELOG.md#unreleased) until it receives a versioned release.
 
-## Latest: v5.7.0 Apex (November 2, 2026)
+## Latest: v5.7.1 (November 7, 2026)
+Stability and Gateway reliability improvements, Cloudflare context-window budgeting, provider discovery and hot-swapping, and local Artifact Engine support. Details: [Release Notes](docs/releases/RELEASE_NOTES_v5.7.1.md).
+
+## v5.7.0 Apex (November 2, 2026)
 Introduces the connector engine, agent-enabled Markets workspace, optional local neural memory, OpenSky-backed resource aggregation, provider discovery, and a gateway-supervised recovery UI. Details: [Release Notes](docs/releases/RELEASE_NOTES_v5.7.0.md).
 
 ## v5.6.2 Apex (October 29, 2026)
@@ -21,6 +24,7 @@ Project-scoped agent operations and project memory, a redesigned workspace hiera
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| **v5.7.1** | Nov 7, 2026 | Gateway/Electron stability, Cloudflare context budgeting, provider discovery and hot-swapping, Artifact Engine |
 | **v5.7.0 Apex** | Nov 2, 2026 | Connectors, Markets, neural memory, public resource aggregation, provider discovery, recovery UI, production automation |
 | **v5.6.2 Apex** | Oct 29, 2026 | Windows launch and setup hardening, update progress, runtime and UI reliability |
 | **v5.6.1 Apex** | Oct 25, 2026 | Runner and history duplication fixes, session persistence hardening, process error handling, configured SARSI routes |

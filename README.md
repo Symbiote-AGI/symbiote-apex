@@ -6,7 +6,7 @@
 
 **Persistent AI agent runtime for any type of workspace.**
 
-[![Version](https://img.shields.io/badge/version-5.7.0-blue?style=flat-square)](https://github.com/artifact-opensource/symbiote/releases)
+[![Version](https://img.shields.io/badge/version-5.7.1-blue?style=flat-square)](https://github.com/artifact-opensource/symbiote/releases)
 [![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9.3-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![MIT License](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)](LICENSE) <br>
@@ -202,7 +202,7 @@ Contributions are welcome. Please read the [contribution guidelines](.github/CON
 
 ## Documentation
 
-Additional guides live in [`docs/`](docs/README.md). Start with [Quick Start](docs/getting-started/quick-start.md), [Configuration](docs/getting-started/configuration.md), [Built-in Tools](docs/tools/built-in.md), and the [full changelog](CHANGELOG.md). Current release details are in [Release Notes](docs/releases/RELEASE_NOTES_v5.7.0.md).
+Additional guides live in [`docs/`](docs/README.md). Start with [Quick Start](docs/getting-started/quick-start.md), [Configuration](docs/getting-started/configuration.md), [Built-in Tools](docs/tools/built-in.md), and the [full changelog](CHANGELOG.md). Current release details are in [Release Notes](docs/releases/RELEASE_NOTES_v5.7.1.md).
 
 ## License
 
